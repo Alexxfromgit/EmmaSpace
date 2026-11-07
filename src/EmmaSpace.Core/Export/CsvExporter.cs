@@ -13,12 +13,19 @@ public sealed record CsvExportOptions
 
 public static class CsvExporter
 {
+    /// <summary>
+    /// Exports in the background. Call it on the thread that changes the tree (the UI thread): the
+    /// tree is copied before the first await, so a removal meanwhile cannot skip folders or mix
+    /// totals from before and after it.
+    /// </summary>
     public static async Task ExportAsync(FileTree tree, string path, CsvExportOptions options, CancellationToken ct = default)
     {
+        using var copy = tree.Copy();
         await using var writer = new StreamWriter(path, false, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
-        await Task.Run(() => Write(tree, writer, options, ct), ct);
+        await Task.Run(() => Write(copy, writer, options, ct), ct);
     }
 
+    /// <summary>Writes synchronously, on the calling thread (which must be the one changing the tree).</summary>
     public static void Write(FileTree tree, TextWriter writer, CsvExportOptions options, CancellationToken ct = default)
     {
         var inv = CultureInfo.InvariantCulture;

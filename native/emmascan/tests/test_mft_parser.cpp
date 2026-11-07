@@ -307,6 +307,33 @@ TEST_CASE("a subfolder can be the root") {
     CHECK_FALSE(index.build_tree(31, u"C:\\docs\\a.txt", store, cancel, files, dirs, bytes)); // not a directory
 }
 
+TEST_CASE("a subfolder scan counts a hard-linked file whose first name lies outside it") {
+    MftIndex index(40);
+    add(index, kRootFrn, RecordBuilder(kDir, 5).resident(kAttrFileName, file_name(kRootFrn, 5, u".")).finish());
+    add(index, 30, RecordBuilder(kDir, 2).resident(kAttrFileName, file_name(kRootFrn, 5, u"docs")).finish());
+    // First name at the volume root, second and third inside docs
+    add(index, 32, RecordBuilder(kInUse).resident(kAttrFileName, file_name(kRootFrn, 5, u"outside.bin"))
+                       .resident(kAttrFileName, file_name(30, 2, u"inside.bin"))
+                       .resident(kAttrFileName, file_name(30, 2, u"inside2.bin"))
+                       .resident(kAttrData, bytes_of_size(64)).finish());
+
+    NodeStore store;
+    std::atomic<bool> cancel{false};
+    uint64_t files, dirs, bytes;
+    REQUIRE(index.build_tree(30, u"C:\\docs", store, cancel, files, dirs, bytes));
+    store.finalize();
+    CHECK(store.nodes()[0].size == 64);
+    CHECK(store.nodes()[0].file_count == 2);
+    CHECK(bytes == 64);
+    const uint32_t inside = child_named(store, 0, u"inside.bin");
+    const uint32_t inside2 = child_named(store, 0, u"inside2.bin");
+    REQUIRE(inside != ES_NONE);
+    REQUIRE(inside2 != ES_NONE);
+    CHECK(store.nodes()[inside].size + store.nodes()[inside2].size == 64);
+    CHECK(((store.nodes()[inside].flags | store.nodes()[inside2].flags) & ES_NODE_HAS_LINKS) != 0);
+    CHECK(((store.nodes()[inside].flags | store.nodes()[inside2].flags) & ES_NODE_HARDLINK) != 0);
+}
+
 TEST_CASE("dates beyond the year 9999 are clamped") {
     std::vector<uint8_t> si(48, 0);
     put<int64_t>(si, 8, INT64_MAX);  // NTFS can store dates up to the year 30828

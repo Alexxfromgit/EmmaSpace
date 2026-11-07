@@ -35,9 +35,13 @@ public abstract partial class AnalysisViewModelBase(INodeActions actions) : Obse
 
     /// <summary>
     /// Runs <paramref name="work"/> on the thread pool while holding a lease on the tree, then
-    /// applies the result on the UI thread unless the tree changed or the work was cancelled.
+    /// applies the result on the UI thread unless the tree was replaced or the work was cancelled.
+    /// A lease does not stop removals, so if the tree changed while the work ran, its result may
+    /// describe the old state (or a mix of both): it is then run again, unless
+    /// <paramref name="rerunOnChange"/> is false, in which case the caller's
+    /// <see cref="OnNodeRemoved"/> is relied on to correct the applied result.
     /// </summary>
-    protected async Task RunAsync<T>(Func<FileTree, CancellationToken, Task<T>> work, Action<T> apply)
+    protected async Task RunAsync<T>(Func<FileTree, CancellationToken, Task<T>> work, Action<T> apply, bool rerunOnChange = true)
     {
         var tree = Tree;
         if (tree is null) return;
@@ -46,12 +50,20 @@ public abstract partial class AnalysisViewModelBase(INodeActions actions) : Obse
         IsBusy = true;
         try
         {
-            var result = await Task.Run(async () =>
+            while (true)
             {
-                using var lease = tree.Lease();
-                return await work(tree, cts.Token);
-            }, cts.Token);
-            if (!cts.IsCancellationRequested && ReferenceEquals(tree, Tree)) apply(result);
+                var revision = tree.Revision;
+                var result = await Task.Run(async () =>
+                {
+                    using var lease = tree.Lease();
+                    return await work(tree, cts.Token);
+                }, cts.Token);
+                if (cts.IsCancellationRequested || !ReferenceEquals(tree, Tree)) return;
+                if (tree.Revision != revision && rerunOnChange) continue;
+                apply(result);
+                if (tree.Revision != revision) OnNodeRemoved();
+                return;
+            }
         }
         catch (OperationCanceledException)
         {

@@ -235,6 +235,31 @@ bool MftIndex::build_tree(uint32_t root_frn, std::u16string_view root_name, Node
     root_info.attributes = root.attributes;
     store.add_root(root_info);
 
+    // A file with several names is counted under the first of them met inside this subtree, so a
+    // subfolder scan still gets its bytes when the volume-wide first name lies outside it.
+    std::vector<uint8_t> counted(n, 0);
+    auto add_file = [&](const Entry& e, uint32_t frn, EntryInfo& info) {
+        info.mtime = e.mtime;
+        info.atime = e.atime;
+        info.attributes = e.attributes;
+        ++files;
+        if (counted[frn]) {
+            info.flags = ES_NODE_HARDLINK;
+            return;
+        }
+        counted[frn] = 1;
+        info.size = e.size;
+        info.allocated = e.allocated;
+        if (e.flags & kHasLinks) info.flags |= ES_NODE_HAS_LINKS;
+        if ((e.attributes & kFileAttributeReparsePoint) && is_link_reparse_tag(e.reparse_tag))
+            info.flags |= ES_NODE_REPARSE; // file symlink: never followed
+        if (e.attributes & kCloudAttributes) {
+            info.size = std::min(info.size, info.allocated); // online-only data takes no local space
+            info.flags |= ES_NODE_CLOUD;
+        }
+        bytes += info.size;
+    };
+
     struct Pending {
         uint32_t frn;
         uint32_t node;
@@ -252,37 +277,22 @@ bool MftIndex::build_tree(uint32_t root_frn, std::u16string_view root_name, Node
             EntryInfo info;
             if (c >= n) {
                 const auto& link = links_[c - n];
-                const Entry& target = entries_[link.frn];
                 info.name = name_at(link.name_offset, link.name_length);
-                info.flags = ES_NODE_HARDLINK;
-                info.mtime = target.mtime;
-                info.atime = target.atime;
-                info.attributes = target.attributes;
-                ++files;
+                add_file(entries_[link.frn], link.frn, info);
                 batch_frn.push_back(UINT32_MAX);
             } else {
                 const Entry& e = entries_[c];
                 info.name = name_at(e.name_offset, e.name_length);
-                info.mtime = e.mtime;
-                info.atime = e.atime;
-                info.attributes = e.attributes;
                 if (e.flags & kDirectory) {
+                    info.mtime = e.mtime;
+                    info.atime = e.atime;
+                    info.attributes = e.attributes;
                     info.flags = ES_NODE_DIRECTORY;
                     if ((e.attributes & kFileAttributeReparsePoint) && is_link_reparse_tag(e.reparse_tag))
                         info.flags |= ES_NODE_REPARSE;
                     ++dirs;
                 } else {
-                    info.size = e.size;
-                    info.allocated = e.allocated;
-                    if (e.flags & kHasLinks) info.flags |= ES_NODE_HAS_LINKS;
-                    if ((e.attributes & kFileAttributeReparsePoint) && is_link_reparse_tag(e.reparse_tag))
-                        info.flags |= ES_NODE_REPARSE; // file symlink: never followed
-                    if (e.attributes & kCloudAttributes) {
-                        info.size = std::min(info.size, info.allocated); // online-only data takes no local space
-                        info.flags |= ES_NODE_CLOUD;
-                    }
-                    bytes += info.size;
-                    ++files;
+                    add_file(e, c, info);
                 }
                 batch_frn.push_back(c);
             }

@@ -27,6 +27,8 @@ void run_scan(es_scan* scan) {
             } else {
                 scan->phase = ES_PHASE_FINALIZING;
                 scan->store.finalize();
+                // A cancel that arrived while sorting still wins: the caller asked for no result.
+                if (scan->cancel.load()) status = ES_ERR_CANCELLED;
             }
         }
     } catch (const std::bad_alloc&) {

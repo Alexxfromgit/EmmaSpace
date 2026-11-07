@@ -34,6 +34,20 @@ public sealed class FileTree : IDisposable
     /// <inheritdoc cref="NodeStorage.Lease"/>
     public IDisposable Lease() => _storage.Lease();
 
+    /// <summary>
+    /// Copies the arrays into a tree of their own. Call it on the thread that changes the tree (the
+    /// UI thread) before handing work to the background: a lease keeps memory alive but does not
+    /// stop <see cref="Remove"/> from changing totals and sibling order under a reader.
+    /// </summary>
+    public FileTree Copy() =>
+        new(new ArrayNodeStorage(Nodes.ToArray(), Names.ToArray()), Info) { SizesApproximate = SizesApproximate };
+
+    /// <summary>
+    /// Incremented by every <see cref="Remove"/>. Background readers of the live tree compare it
+    /// before and after to tell whether their result still describes the current state.
+    /// </summary>
+    public int Revision { get; private set; }
+
     public string RootPath => GetName(Root);
 
     /// <summary>Raised after a node (and its subtree) was removed.</summary>
@@ -162,6 +176,7 @@ public sealed class FileTree : IDisposable
         for (var a = parent; a != Root && a != None; a = ToIndex(nodes[a].Parent))
             SortChildren(ToIndex(nodes[a].Parent));
 
+        Revision++;
         NodeRemoved?.Invoke(node);
     }
 

@@ -20,7 +20,10 @@ public static class SnapshotFile
     // Far above any real scan (a 5.8 M-entry system drive is well under 10 M nodes), but bounded,
     // so a malformed header cannot ask for an arbitrary amount of memory.
     internal const int MaxNodes = 64 * 1024 * 1024;
+    // Entry names are at most 255 UTF-16 units on every supported file system; the root's name is
+    // its full path, which can be far longer (long paths), so it gets an allowance of its own.
     private const int MaxNameCharsPerNode = 512;
+    private const int MaxRootNameChars = ushort.MaxValue;
 
     /// <summary>
     /// Saves a snapshot. Call it on the thread that changes the tree (the UI thread): the arrays
@@ -29,14 +32,11 @@ public static class SnapshotFile
     /// </summary>
     public static async Task SaveAsync(FileTree tree, string path, CancellationToken ct = default)
     {
-        var info = tree.Info;
-        var nodes = tree.Nodes.ToArray();
-        var names = tree.Names.ToArray();
-
+        using var copy = tree.Copy();
         var temp = path + ".tmp";
         await using (var file = File.Create(temp))
         {
-            await Task.Run(() => Write(info, nodes, names, file), ct);
+            await Task.Run(() => Save(copy, file), ct);
         }
         File.Move(temp, path, overwrite: true);
     }
@@ -96,7 +96,7 @@ public static class SnapshotFile
         var namesLength = reader.ReadInt32();
         var nodeSize = reader.ReadInt32();
         if (nodeSize != Marshal.SizeOf<EsNode>() || nodeCount <= 0 || nodeCount > MaxNodes || namesLength < 0 ||
-            namesLength > (long)nodeCount * MaxNameCharsPerNode)
+            namesLength > (long)(nodeCount - 1) * MaxNameCharsPerNode + MaxRootNameChars)
             throw new InvalidDataException("Snapshot header is corrupt.");
 
         EsNode[] nodes;
@@ -107,7 +107,7 @@ public static class SnapshotFile
             names = ReadArray<char>(brotli, namesLength);
         }
 
-        Validate(nodes, namesLength);
+        Validate(nodes, names);
         var info = new ScanInfo(rootPath, scannedAt, elapsed, mode, ScanSource.Snapshot, errors);
         return new FileTree(new ArrayNodeStorage(nodes, names), info);
     }
@@ -131,20 +131,21 @@ public static class SnapshotFile
         return items;
     }
 
-    // Guards against corrupt files producing out-of-range indexes, endless loops or shared
-    // children later on: every child chain must lead only to nodes that name this parent, and
+    // Guards against corrupt or crafted files: out-of-range indexes, endless loops or shared
+    // children, names that would make GetPath leave the root, and cached totals that disagree with
+    // the nodes below them. Every child chain must lead only to nodes that name this parent, and
     // no node may appear in more than one chain (or twice in one).
-    private static void Validate(EsNode[] nodes, int namesLength)
+    private static void Validate(EsNode[] nodes, char[] names)
     {
         var count = (uint)nodes.Length;
         for (var i = 0; i < nodes.Length; i++)
         {
             ref readonly var n = ref nodes[i];
             var linksOk = (n.Parent == EsNode.None ? i == 0 : n.Parent < i) &&
-                          (n.FirstChild == EsNode.None || (n.FirstChild > i && n.FirstChild < count)) &&
+                          (n.FirstChild == EsNode.None || (n.FirstChild > i && n.FirstChild < count && n.IsDirectory)) &&
                           (n.NextSibling == EsNode.None || n.NextSibling < count);
-            if (!linksOk || (long)n.NameOffset + n.NameLength > namesLength || !UnixTime.IsValid(n.MTime) ||
-                !UnixTime.IsValid(n.ATime))
+            if (!linksOk || (long)n.NameOffset + n.NameLength > names.Length || !UnixTime.IsValid(n.MTime) ||
+                !UnixTime.IsValid(n.ATime) || (i > 0 && !IsEntryName(names.AsSpan((int)n.NameOffset, n.NameLength))))
                 throw new InvalidDataException($"Snapshot node {i} is corrupt.");
         }
 
@@ -170,5 +171,48 @@ public static class SnapshotFile
             if (!linked[i] || nodes[nodes[i].Parent].IsDeleted)
                 throw new InvalidDataException($"Snapshot node {i} is not reachable from the root.");
         }
+
+        ValidateTotals(nodes);
     }
+
+    // Folder sizes and counts are cached subtree totals that clean-up suggestions and removals
+    // rely on (an "empty" folder with files inside, or a removal that underflows its ancestors),
+    // so they must equal the sums over the live nodes below. Children always follow their parent,
+    // so one backwards pass sums every subtree.
+    private static void ValidateTotals(EsNode[] nodes)
+    {
+        var sums = new (ulong Size, ulong Allocated, uint Files, uint Dirs)[nodes.Length];
+        try
+        {
+            for (var i = nodes.Length - 1; i >= 0; i--)
+            {
+                ref readonly var n = ref nodes[i];
+                if (n.IsDeleted) continue;
+                var expected = n.IsDirectory ? sums[i] : (Size: n.Size, Allocated: n.Allocated, Files: 1u, Dirs: 0u);
+                if (n.Size != expected.Size || n.Allocated != expected.Allocated || n.FileCount != expected.Files ||
+                    n.DirCount != expected.Dirs)
+                    throw new InvalidDataException($"Snapshot node {i} has totals that do not match its contents.");
+                if (i == 0) break;
+                ref var p = ref sums[n.Parent];
+                p.Size = checked(p.Size + n.Size);
+                p.Allocated = checked(p.Allocated + n.Allocated);
+                p.Files += n.FileCount;
+                p.Dirs += n.DirCount + (n.IsDirectory ? 1u : 0u);
+            }
+        }
+        catch (OverflowException)
+        {
+            throw new InvalidDataException("Snapshot totals overflow.");
+        }
+    }
+
+    // A single path component: GetPath joins these under the root, so a separator, NUL or a
+    // "." / ".." component would point file actions somewhere else.
+    private static bool IsEntryName(ReadOnlySpan<char> name) =>
+        !name.IsEmpty && name.Length <= MaxNameCharsPerNode && name is not "." and not ".." &&
+        name.IndexOfAny(s_forbiddenNameChars) < 0;
+
+    // Backslash separates folders only on Windows; elsewhere it is a valid character in names.
+    private static readonly System.Buffers.SearchValues<char> s_forbiddenNameChars =
+        System.Buffers.SearchValues.Create(OperatingSystem.IsWindows() ? "/\\\0" : "/\0");
 }

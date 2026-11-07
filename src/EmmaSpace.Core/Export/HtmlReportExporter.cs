@@ -10,12 +10,20 @@ namespace EmmaSpace.Core.Export;
 /// <summary>Writes a self-contained HTML report (no external resources) summarising a scan.</summary>
 public static class HtmlReportExporter
 {
+    /// <summary>
+    /// Builds the report in the background. Call it on the thread that changes the tree (the UI
+    /// thread): the tree is copied before the first await, so every section describes the same
+    /// state even if a removal happens meanwhile.
+    /// </summary>
     public static async Task ExportAsync(FileTree tree, string path, CancellationToken ct = default)
     {
-        var html = await Task.Run(() => Build(tree, ct), ct);
+        string html;
+        using (var copy = tree.Copy())
+            html = await Task.Run(() => Build(copy, ct), ct);
         await File.WriteAllTextAsync(path, html, Encoding.UTF8, ct);
     }
 
+    /// <summary>Builds synchronously, on the calling thread (which must be the one changing the tree).</summary>
     public static string Build(FileTree tree, CancellationToken ct = default)
     {
         ref readonly var root = ref tree.Nodes[FileTree.Root];

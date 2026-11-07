@@ -79,8 +79,9 @@ public:
 
     void add(uint32_t frn, const ParsedRecord& record);
 
-    // Builds the subtree below `root_frn`. Hard links after the first appear as extra entries
-    // flagged ES_NODE_HARDLINK with zero size, so totals count each file once.
+    // Builds the subtree below `root_frn`. A file with several hard links is counted under the
+    // first of its names found in that subtree; its other names there appear flagged
+    // ES_NODE_HARDLINK with zero size, so totals count each file once.
     // Returns false if cancelled or if the root is not a directory in use.
     bool build_tree(uint32_t root_frn, std::u16string_view root_name, NodeStore& store,
                     const std::atomic<bool>& cancel, uint64_t& files, uint64_t& dirs, uint64_t& bytes) const;

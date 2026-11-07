@@ -94,13 +94,15 @@ public sealed partial class DuplicatesViewModel(INodeActions actions, SettingsSe
             Status = $"{p.Stage}… {p.Done:N0} / {p.Total:N0}";
             ProgressValue = p.Total == 0 ? 0 : p.Done * 100.0 / p.Total;
         });
+        // Hashing again after a removal would be slow, and a removal cannot create new duplicates:
+        // the result is applied as is and OnNodeRemoved drops the removed copies from it.
         await RunAsync((tree, ct) => DuplicateFinder.FindAsync(tree, options, progress, ct), groups =>
         {
             foreach (var g in groups) Groups.Add(new DuplicateGroupViewModel(Tree!, g, Actions));
             SelectedGroup = Groups.FirstOrDefault();
             HasRun = true;
             UpdateStatus();
-        });
+        }, rerunOnChange: false);
     }
 
     [RelayCommand]

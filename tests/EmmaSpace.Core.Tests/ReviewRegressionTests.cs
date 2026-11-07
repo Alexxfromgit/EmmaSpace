@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Text;
 using EmmaSpace.Core.Analysis;
+using EmmaSpace.Core.Export;
 using EmmaSpace.Core.Formatting;
 using EmmaSpace.Core.Interop;
 using EmmaSpace.Core.Model;
@@ -157,12 +158,55 @@ public class ReviewRegressionTests
     }
 
     [Fact]
+    public async Task Exports_copy_the_tree_before_any_removal_can_interleave()
+    {
+        using var tree = TreeFixtures.Sample();
+        var csv = Path.Combine(Path.GetTempPath(), "emmaspace-" + Guid.NewGuid().ToString("N") + ".csv");
+        var html = Path.ChangeExtension(csv, ".html");
+        try
+        {
+            var ct = TestContext.Current.CancellationToken;
+            var csvExport = CsvExporter.ExportAsync(tree, csv, new CsvExportOptions { IncludeFiles = true, MaxDepth = null }, ct);
+            var htmlExport = HtmlReportExporter.ExportAsync(tree, html, ct);
+            // Runs while the exports may still be reading in the background.
+            tree.Remove(TreeFixtures.Find(tree, "videos"));
+            await Task.WhenAll(csvExport, htmlExport);
+
+            var rows = await File.ReadAllLinesAsync(csv, ct);
+            Assert.Contains(rows, r => r.Contains("movie.mp4", StringComparison.Ordinal));
+            Assert.StartsWith(Escape(tree.RootPath) + ",Folder,3365,", rows[1]); // totals from the same state
+            var report = await File.ReadAllTextAsync(html, ct);
+            Assert.Contains("movie.mp4", report, StringComparison.Ordinal);
+            Assert.Contains("videos", report, StringComparison.Ordinal);
+        }
+        finally
+        {
+            File.Delete(csv);
+            File.Delete(html);
+        }
+
+        static string Escape(string s) => s.Contains(',') ? "\"" + s + "\"" : s;
+    }
+
+    [Fact]
+    public void Removals_bump_the_tree_revision()
+    {
+        using var tree = TreeFixtures.Sample();
+        var before = tree.Revision;
+        tree.Remove(TreeFixtures.Find(tree, "videos"));
+        Assert.Equal(before + 1, tree.Revision);
+        using var copy = tree.Copy();
+        tree.Remove(TreeFixtures.Find(tree, "docs"));
+        Assert.NotEqual(FileTree.None, TreeFixtures.Find(copy, "docs")); // a copy is not affected
+    }
+
+    [Fact]
     public void Snapshots_with_unreachable_live_nodes_are_rejected()
     {
         var nodes = new EsNode[2];
         nodes[0] = new EsNode { Parent = EsNode.None, FirstChild = EsNode.None, NextSibling = EsNode.None, Flags = NodeFlags.Directory };
-        nodes[1] = new EsNode { Parent = 0, FirstChild = EsNode.None, NextSibling = EsNode.None, Size = 10 }; // live, but no chain leads to it
-        using var stream = WriteRawSnapshot(nodes, [], nodes.Length, 0);
+        nodes[1] = new EsNode { Parent = 0, FirstChild = EsNode.None, NextSibling = EsNode.None, NameLength = 1, Size = 10, FileCount = 1 }; // live, but no chain leads to it
+        using var stream = WriteRawSnapshot(nodes, ['a'], nodes.Length, 1);
         Assert.Throws<InvalidDataException>(() => SnapshotFile.Load(stream));
     }
 
@@ -214,6 +258,14 @@ public class ReviewRegressionTests
     }
 
     [Fact]
+    public void Scan_roots_keep_leading_and_trailing_spaces()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "Windows drops trailing spaces from names itself.");
+        Assert.Equal("/tmp/reports ", ManagedScanner.NormalizeRoot("/tmp/reports "));
+        Assert.Equal("/tmp/ reports", ManagedScanner.NormalizeRoot("/tmp/ reports"));
+    }
+
+    [Fact]
     public async Task The_native_scanner_accepts_relative_paths()
     {
         Assert.SkipUnless(NativeEngine.IsAvailable, "Native engine not built for this platform.");
@@ -230,8 +282,8 @@ public class ReviewRegressionTests
     {
         var nodes = new EsNode[2];
         nodes[0] = new EsNode { Parent = EsNode.None, FirstChild = 1, NextSibling = EsNode.None, Flags = NodeFlags.Directory };
-        nodes[1] = new EsNode { Parent = 0, FirstChild = EsNode.None, NextSibling = 1 }; // points at itself
-        using var stream = WriteRawSnapshot(nodes, [], nodes.Length, 0);
+        nodes[1] = new EsNode { Parent = 0, FirstChild = EsNode.None, NextSibling = 1, NameLength = 1, FileCount = 1 }; // points at itself
+        using var stream = WriteRawSnapshot(nodes, ['a'], nodes.Length, 1);
         Assert.Throws<InvalidDataException>(() => SnapshotFile.Load(stream));
     }
 
@@ -246,6 +298,81 @@ public class ReviewRegressionTests
         var before = GC.GetTotalAllocatedBytes();
         Assert.ThrowsAny<Exception>(() => SnapshotFile.Load(truncated));
         Assert.True(GC.GetTotalAllocatedBytes() - before < 512L * 1024 * 1024);
+    }
+
+    // root -> docs -> file (10 bytes), fully linked, with the given name for the file and the given
+    // cached totals on both folders.
+    private static EsNode[] DocsWithFile(int fileNameLength, ulong folderSize, uint folderFiles)
+    {
+        var nodes = new EsNode[3];
+        nodes[0] = new EsNode { Parent = EsNode.None, FirstChild = 1, NextSibling = EsNode.None, Flags = NodeFlags.Directory,
+                                Size = folderSize, FileCount = folderFiles, DirCount = 1 };
+        nodes[1] = new EsNode { Parent = 0, FirstChild = 2, NextSibling = EsNode.None, Flags = NodeFlags.Directory,
+                                NameOffset = 0, NameLength = 4, Size = folderSize, FileCount = folderFiles };
+        nodes[2] = new EsNode { Parent = 1, FirstChild = EsNode.None, NextSibling = EsNode.None,
+                                NameOffset = 4, NameLength = (ushort)fileNameLength, Size = 10, FileCount = 1 };
+        return nodes;
+    }
+
+    private static MemoryStream DocsSnapshot(string fileName, ulong folderSize = 10, uint folderFiles = 1)
+    {
+        var names = ("docs" + fileName).ToCharArray();
+        return WriteRawSnapshot(DocsWithFile(fileName.Length, folderSize, folderFiles), names, 3, names.Length);
+    }
+
+    [Fact]
+    public void Consistent_raw_snapshots_load()
+    {
+        using var stream = DocsSnapshot("file.bin");
+        using var tree = SnapshotFile.Load(stream);
+        Assert.Equal(10UL, tree.Nodes[FileTree.Root].Size);
+    }
+
+    [Fact]
+    public void Snapshots_whose_folder_totals_disagree_with_their_contents_are_rejected()
+    {
+        // A non-empty folder claiming to be empty would be offered for clean-up, and removing the
+        // file would underflow its totals.
+        using var zero = DocsSnapshot("file.bin", folderSize: 0, folderFiles: 0);
+        Assert.Throws<InvalidDataException>(() => SnapshotFile.Load(zero));
+        using var tooBig = DocsSnapshot("file.bin", folderSize: 11, folderFiles: 1);
+        Assert.Throws<InvalidDataException>(() => SnapshotFile.Load(tooBig));
+    }
+
+    [Theory]
+    [InlineData("../outside.bin")]
+    [InlineData("..")]
+    [InlineData(".")]
+    [InlineData("a/b")]
+    [InlineData("nul\0inside")]
+    public void Snapshots_with_names_that_leave_their_folder_are_rejected(string name)
+    {
+        using var stream = DocsSnapshot(name);
+        Assert.Throws<InvalidDataException>(() => SnapshotFile.Load(stream));
+    }
+
+    [Fact]
+    public void Snapshots_with_backslash_names_are_rejected_only_where_it_separates_folders()
+    {
+        using var stream = DocsSnapshot(@"..\outside.bin");
+        if (OperatingSystem.IsWindows())
+            Assert.Throws<InvalidDataException>(() => SnapshotFile.Load(stream));
+        else
+            SnapshotFile.Load(stream).Dispose(); // a legal file name on macOS and Linux
+    }
+
+    [Fact]
+    public void Snapshots_of_folders_with_long_paths_load()
+    {
+        var root = Path.Join(Path.GetTempPath(), new string('d', 700));
+        var b = new TreeBuilder();
+        b.AddRoot(root);
+        using var tree = b.Build(new ScanInfo(root, DateTimeOffset.Now, TimeSpan.Zero, ScanMode.Walker, ScanSource.Managed, 0));
+        using var stream = new MemoryStream();
+        SnapshotFile.Save(tree, stream);
+        stream.Position = 0;
+        using var loaded = SnapshotFile.Load(stream);
+        Assert.Equal(root, loaded.RootPath);
     }
 
     // Writes a snapshot with an arbitrary header (counts) and payload, bypassing SnapshotFile.Save.

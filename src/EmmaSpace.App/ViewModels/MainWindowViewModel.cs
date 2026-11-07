@@ -421,11 +421,11 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
     [RelayCommand]
     private async Task SaveSnapshotAsync()
     {
-        if (Tree is null) return;
-        var name = $"{SafeName(Tree.RootPath)}-{DateTime.Now:yyyy-MM-dd-HHmm}{SnapshotFile.Extension}";
+        if (Tree is not { } tree) return;
+        var name = $"{SafeName(tree.RootPath)}-{DateTime.Now:yyyy-MM-dd-HHmm}{SnapshotFile.Extension}";
         var path = await _dialogs.SaveFileAsync("Save snapshot", name, "Emma Space snapshot", SnapshotFile.Extension);
-        if (path is null) return;
-        await RunFileTaskAsync("Could not save snapshot", () => SnapshotFile.SaveAsync(Tree, path));
+        if (path is null || !ReferenceEquals(tree, Tree)) return; // the scan was replaced or closed meanwhile
+        await RunFileTaskAsync("Could not save snapshot", () => SnapshotFile.SaveAsync(tree, path));
     }
 
     [RelayCommand]
@@ -452,29 +452,20 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
 
     private async Task ExportCsvAsync(CsvExportOptions options, string suffix)
     {
-        if (Tree is null) return;
-        var path = await _dialogs.SaveFileAsync("Export CSV", $"{SafeName(Tree.RootPath)}-{suffix}.csv", "CSV file", ".csv");
-        if (path is null) return;
-        var tree = Tree;
-        await RunFileTaskAsync("Export failed", async () =>
-        {
-            using var lease = tree.Lease();
-            await CsvExporter.ExportAsync(tree, path, options);
-        });
+        if (Tree is not { } tree) return;
+        var path = await _dialogs.SaveFileAsync("Export CSV", $"{SafeName(tree.RootPath)}-{suffix}.csv", "CSV file", ".csv");
+        if (path is null || !ReferenceEquals(tree, Tree)) return;
+        // The exporter copies the tree before going to the background, so removals cannot skew it.
+        await RunFileTaskAsync("Export failed", () => CsvExporter.ExportAsync(tree, path, options));
     }
 
     [RelayCommand]
     private async Task ExportHtmlAsync()
     {
-        if (Tree is null) return;
-        var path = await _dialogs.SaveFileAsync("Export report", $"{SafeName(Tree.RootPath)}-report.html", "HTML report", ".html");
-        if (path is null) return;
-        var tree = Tree;
-        await RunFileTaskAsync("Export failed", async () =>
-        {
-            using var lease = tree.Lease();
-            await HtmlReportExporter.ExportAsync(tree, path);
-        });
+        if (Tree is not { } tree) return;
+        var path = await _dialogs.SaveFileAsync("Export report", $"{SafeName(tree.RootPath)}-report.html", "HTML report", ".html");
+        if (path is null || !ReferenceEquals(tree, Tree)) return;
+        await RunFileTaskAsync("Export failed", () => HtmlReportExporter.ExportAsync(tree, path));
         Try(() => _fileActions.Open(path));
     }
 

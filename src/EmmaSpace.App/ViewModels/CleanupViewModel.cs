@@ -38,9 +38,12 @@ public sealed partial class CleanupViewModel(INodeActions actions, SettingsServi
 
     public override void OnNodeRemoved()
     {
+        // Drop the removed entries right away, then query again: a removal can leave folders
+        // empty (or turn a listed empty folder's parent into the topmost empty one).
         RemoveDeleted(OldFiles);
         RemoveDeleted(EmptyFolders);
         UpdateSummaries();
+        if (Tree is not null) _ = RefreshAsync();
     }
 
     partial void OnAgeIndexChanged(int value)

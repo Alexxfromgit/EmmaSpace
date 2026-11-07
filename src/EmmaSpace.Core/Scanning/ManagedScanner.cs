@@ -151,11 +151,13 @@ public sealed class ManagedScanner : IScanner
     /// <summary>
     /// The absolute folder to scan, as both scanners use it: relative paths are resolved against
     /// the current folder, a bare drive ("C:") means its root ("C:\"), and trailing separators are
-    /// dropped except on a root. Invalid input becomes a <see cref="ScanException"/>.
+    /// dropped except on a root. Invalid input becomes a <see cref="ScanException"/>. Spaces are
+    /// kept: on macOS and Linux they are legal at either end of a name (trimming typed text is up
+    /// to the UI).
     /// </summary>
     internal static string NormalizeRoot(string path)
     {
-        var input = path.Trim();
+        var input = path;
         if (OperatingSystem.IsWindows() && input.Length == 2 && input[1] == ':' && char.IsAsciiLetter(input[0]))
             input += Path.DirectorySeparatorChar; // "C:" alone would mean "the current folder on C:"
         string full;

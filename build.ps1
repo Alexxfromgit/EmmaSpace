@@ -44,7 +44,15 @@ Resolve-CMake
 $preset = $Runtime
 Invoke-Step "Configure native ($preset)" { cmake --preset $preset }
 Invoke-Step "Build native" { cmake --build --preset "$preset-release" }
-if ($Test) { Invoke-Step "Native tests" { ctest --preset $preset } }
+if ($Test) {
+    # Native test binaries only run on a host of the same architecture (an x64 host cannot run ARM64 code).
+    $hostArch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()
+    if ($Runtime -eq "win-$hostArch") {
+        Invoke-Step "Native tests" { ctest --preset $preset }
+    } else {
+        Write-Host "Skipping native tests: $Runtime binaries cannot run on this $hostArch host" -ForegroundColor Yellow
+    }
+}
 
 # The native library is already built, so MSBuild can skip its own CMake step.
 Invoke-Step "Build .NET ($Configuration)" { dotnet build EmmaSpace.slnx -c $Configuration -p:EmmaSkipNative=true }

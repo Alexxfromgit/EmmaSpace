@@ -79,6 +79,7 @@ public sealed partial class FileTypesViewModel(INodeActions actions) : AnalysisV
         var tree = Tree;
         if (value is null || tree is null) return;
         var ext = value.Stats.Extension;
+        var revision = tree.Revision;
         _ = Task.Run(() =>
         {
             using var lease = tree.Lease();
@@ -99,7 +100,9 @@ public sealed partial class FileTypesViewModel(INodeActions actions) : AnalysisV
             return list;
         }).ContinueWith(t =>
         {
-            if (t.IsCompletedSuccessfully && ReferenceEquals(SelectedExtension, value) && ReferenceEquals(tree, Tree))
+            // After a removal the whole breakdown is refreshed, which selects the extension anew.
+            if (t.IsCompletedSuccessfully && ReferenceEquals(SelectedExtension, value) && ReferenceEquals(tree, Tree) &&
+                tree.Revision == revision)
                 foreach (var node in t.Result) ExtensionFiles.Add(new NodeItemViewModel(tree, node, Actions));
         }, TaskScheduler.FromCurrentSynchronizationContext());
     }

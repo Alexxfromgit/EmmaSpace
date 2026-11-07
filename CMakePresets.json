@@ -56,6 +56,12 @@
       "output": { "outputOnFailure": true }
     },
     {
+      "name": "win-arm64",
+      "configurePreset": "win-arm64",
+      "configuration": "Release",
+      "output": { "outputOnFailure": true }
+    },
+    {
       "name": "osx",
       "configurePreset": "osx",
       "configuration": "Release",
