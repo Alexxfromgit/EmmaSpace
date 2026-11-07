@@ -17,10 +17,15 @@
     <File Path="SECURITY.md" />
     <File Path=".github/workflows/ci.yml" />
     <File Path=".github/workflows/release.yml" />
+    <File Path=".github/workflows/pr-title.yml" />
+    <File Path="release-please-config.json" />
+    <File Path=".release-please-manifest.json" />
     <File Path=".github/dependabot.yml" />
     <File Path=".config/dotnet-tools.json" />
     <File Path="build/Native.targets" />
     <File Path="build/make-icon.ps1" />
+    <File Path="build/make-icns.py" />
+    <File Path="build/stage-release.py" />
     <File Path="build.ps1" />
     <File Path="build.sh" />
     <File Path="Directory.Build.props" />

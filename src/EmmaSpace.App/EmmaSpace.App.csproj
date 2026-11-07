@@ -12,7 +12,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <AvaloniaResource Include="Assets\**" />
+    <AvaloniaResource Include="Assets\**" Exclude="Assets\*.icns" /> <!-- the .icns is only for the macOS bundle -->
   </ItemGroup>
 
   <ItemGroup>

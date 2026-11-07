@@ -27,9 +27,10 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
     private bool _syncingSelection;
 
     public MainWindowViewModel(IScanner scanner, IFileActions fileActions, IDialogService dialogs, SettingsService settings,
-        ElevationService elevation)
+        ElevationService elevation, UpdateViewModel updates)
     {
         _scanner = scanner;
+        Updates = updates;
         _elevation = elevation;
         _fileActions = fileActions;
         _dialogs = dialogs;
@@ -54,6 +55,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
     public DuplicatesViewModel Duplicates { get; }
     public CleanupViewModel Cleanup { get; }
     public CompareViewModel Compare { get; }
+    public UpdateViewModel Updates { get; }
 
     public ObservableCollection<DriveViewModel> Drives { get; } = [];
     public ObservableCollection<BreadcrumbItem> Breadcrumbs { get; } = [];

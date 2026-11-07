@@ -21,6 +21,14 @@ See the [README](README.md) for the architecture and layout.
 ## Pull requests
 
 - Keep each PR to one change and describe what it does and how you tested it.
+- Title the PR as a [Conventional Commit](https://www.conventionalcommits.org): PRs are
+  squash-merged, and the title becomes the commit that drives versioning and release notes.
+  - `feat: add treemap search` → new feature, minor release
+  - `fix: keep selection after rescan`, `perf: …`, `deps: …` → patch release
+  - `feat!: …`, or a `BREAKING CHANGE:` line in the description → breaking change
+  - `docs:`, `refactor:`, `test:`, `build:`, `ci:`, `chore:` → no release on their own, not in the notes
+
+  Write the subject for users: it shows up as-is in the changelog and the in-app update notes.
 - Add or update tests: C++ tests live in `native/emmascan/tests` (Catch2), .NET tests in
   `tests/EmmaSpace.Core.Tests` (xUnit v3). CI runs both on Windows, macOS and Linux.
 - Follow the existing style; `.editorconfig` covers formatting. Builds should stay warning-free.

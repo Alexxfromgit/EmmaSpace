@@ -77,8 +77,8 @@ if ($Pack) {
     $folder = "artifacts/pack-input/$Runtime"
     $releases = "artifacts/releases/$Runtime"
     # Velopack refuses to pack a version that is already in the releases folder. Local builds of an
-    # unchanged version replace the old output; real releases bump <Version> (and CI publishes them).
-    $index = Join-Path $releases 'releases.win.json'
+    # unchanged version replace the old output; real releases come from the Release workflow.
+    $index = Join-Path $releases "releases.$Runtime.json"
     if ((Test-Path $index) -and ((Get-Content $index -Raw | ConvertFrom-Json).Assets.Version -contains $version)) {
         Write-Host "Replacing the existing $version build in $releases" -ForegroundColor Yellow
         Remove-Item -Recurse -Force $releases
@@ -87,8 +87,8 @@ if ($Pack) {
     Invoke-Step "Restore vpk" { dotnet tool restore }
     Invoke-Step "Velopack pack $version" {
         dotnet vpk pack --packId EmmaSpace --packVersion $version --packDir $folder --mainExe EmmaSpace.exe `
-            --packTitle "Emma Space" --packAuthors "Emma Space" --icon src/EmmaSpace.App/Assets/emmaspace.ico `
-            --runtime $Runtime --outputDir $releases
+            --packTitle "Emma Space" --packAuthors "Alexander Rubtsov" --icon src/EmmaSpace.App/Assets/emmaspace.ico `
+            --runtime $Runtime --channel $Runtime --outputDir $releases
     }
     Write-Host "Installer and update packages in $releases" -ForegroundColor Green
 }
