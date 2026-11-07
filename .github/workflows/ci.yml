@@ -39,23 +39,19 @@ jobs:
         with:
           global-json-file: global.json
 
-      - name: MSVC environment
-        if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
-
       - name: Install Ninja
         if: runner.os != 'Windows'
         run: |
           if [ "$RUNNER_OS" = "macOS" ]; then brew install ninja || true; fi
           if [ "$RUNNER_OS" = "Linux" ]; then sudo apt-get update && sudo apt-get install -y ninja-build; fi
 
-      # Ninja + Release on every OS, so CI does not depend on a particular Visual Studio version.
-      # pwsh on Windows: in Git Bash, /usr/bin/link would shadow MSVC's link.exe.
+      # Windows: no -G, so CMake uses the newest Visual Studio on the runner. This needs no developer
+      # command prompt, whose environment (e.g. Platform=x64) would leak into the .NET build steps.
       - name: Configure native engine (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: >
-          cmake -S . -B artifacts/native-build/ci -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake -S . -B artifacts/native-build/ci -A x64
           "-DEMMASCAN_OUTPUT_DIR=${{ github.workspace }}/artifacts/native/${{ matrix.native }}"
 
       - name: Configure native engine (macOS / Linux)
@@ -66,11 +62,12 @@ jobs:
           cmake -S . -B artifacts/native-build/ci -G Ninja -DCMAKE_BUILD_TYPE=Release \
                 "-DEMMASCAN_OUTPUT_DIR=$GITHUB_WORKSPACE/artifacts/native/${{ matrix.native }}" "${extra[@]}"
 
+      # --config / -C select Release for the multi-config Visual Studio generator; Ninja ignores them.
       - name: Build native engine
-        run: cmake --build artifacts/native-build/ci
+        run: cmake --build artifacts/native-build/ci --config Release
 
       - name: Native tests
-        run: ctest --test-dir artifacts/native-build/ci --output-on-failure
+        run: ctest --test-dir artifacts/native-build/ci -C Release --output-on-failure
 
       - name: Build .NET
         run: dotnet build EmmaSpace.slnx -c Release -p:EmmaSkipNative=true

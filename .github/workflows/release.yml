@@ -20,8 +20,6 @@ jobs:
         with:
           global-json-file: global.json
 
-      - uses: ilammy/msvc-dev-cmd@v1
-
       - name: Version from tag
         id: version
         shell: pwsh
@@ -30,10 +28,11 @@ jobs:
       - name: Native engine
         shell: pwsh
         run: |
-          cmake -S . -B artifacts/native-build/release -G Ninja -DCMAKE_BUILD_TYPE=Release -DEMMASCAN_BUILD_TESTS=ON `
+          # Newest Visual Studio on the runner (no developer prompt, so no env leaks into dotnet).
+          cmake -S . -B artifacts/native-build/release -A x64 `
             "-DEMMASCAN_OUTPUT_DIR=${{ github.workspace }}/artifacts/native/win-x64"
-          cmake --build artifacts/native-build/release
-          ctest --test-dir artifacts/native-build/release --output-on-failure
+          cmake --build artifacts/native-build/release --config Release
+          ctest --test-dir artifacts/native-build/release -C Release --output-on-failure
 
       - name: .NET tests
         run: dotnet test --project tests/EmmaSpace.Core.Tests -c Release -p:EmmaSkipNative=true
