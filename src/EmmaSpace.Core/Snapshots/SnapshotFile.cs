@@ -21,17 +21,21 @@ public static class SnapshotFile
     internal const int MaxNodes = 64 * 1024 * 1024;
     private const int MaxNameCharsPerNode = 512;
 
+    /// <summary>
+    /// Saves a snapshot. Call it on the thread that changes the tree (the UI thread): the arrays
+    /// are copied before the first await, so a removal while the file is being compressed cannot
+    /// produce a half-updated snapshot, and native memory is not touched in the background.
+    /// </summary>
     public static async Task SaveAsync(FileTree tree, string path, CancellationToken ct = default)
     {
+        var info = tree.Info;
+        var nodes = tree.Nodes.ToArray();
+        var names = tree.Names.ToArray();
+
         var temp = path + ".tmp";
         await using (var file = File.Create(temp))
         {
-            await Task.Run(() =>
-            {
-                // Native trees live in native memory; the lease keeps it alive if the tree is replaced meanwhile.
-                using var lease = tree.Lease();
-                Save(tree, file);
-            }, ct);
+            await Task.Run(() => Write(info, nodes, names, file), ct);
         }
         File.Move(temp, path, overwrite: true);
     }
@@ -43,25 +47,29 @@ public static class SnapshotFile
             return Load(file);
         }, ct);
 
-    public static void Save(FileTree tree, Stream output)
+    /// <summary>Saves synchronously, on the calling thread (which must be the one changing the tree).</summary>
+    public static void Save(FileTree tree, Stream output) => Write(tree.Info, tree.Nodes, tree.Names, output);
+
+    private static void Write(ScanInfo info, ReadOnlySpan<EsNode> nodes, ReadOnlySpan<char> names, Stream output)
     {
-        using var writer = new BinaryWriter(output, Encoding.UTF8, leaveOpen: true);
-        writer.Write(Magic);
-        writer.Write(FormatVersion);
-        writer.Write(tree.Info.RootPath);
-        writer.Write(tree.Info.ScannedAt.ToUnixTimeMilliseconds());
-        writer.Write((long)tree.Info.Elapsed.TotalMilliseconds);
-        writer.Write((int)tree.Info.Mode);
-        writer.Write((int)tree.Info.Source);
-        writer.Write(tree.Info.Errors);
-        writer.Write(tree.Count);
-        writer.Write(tree.Names.Length);
-        writer.Write(Marshal.SizeOf<EsNode>());
-        writer.Flush();
+        using (var writer = new BinaryWriter(output, Encoding.UTF8, leaveOpen: true))
+        {
+            writer.Write(Magic);
+            writer.Write(FormatVersion);
+            writer.Write(info.RootPath);
+            writer.Write(info.ScannedAt.ToUnixTimeMilliseconds());
+            writer.Write((long)info.Elapsed.TotalMilliseconds);
+            writer.Write((int)info.Mode);
+            writer.Write((int)info.Source);
+            writer.Write(info.Errors);
+            writer.Write(nodes.Length);
+            writer.Write(names.Length);
+            writer.Write(Marshal.SizeOf<EsNode>());
+        }
 
         using var brotli = new BrotliStream(output, CompressionLevel.Fastest, leaveOpen: true);
-        brotli.Write(MemoryMarshal.AsBytes(tree.Nodes));
-        brotli.Write(MemoryMarshal.AsBytes(tree.Names));
+        brotli.Write(MemoryMarshal.AsBytes(nodes));
+        brotli.Write(MemoryMarshal.AsBytes(names));
     }
 
     public static FileTree Load(Stream input)
@@ -143,6 +151,18 @@ public static class SnapshotFile
                     throw new InvalidDataException($"Snapshot node {c} is linked inconsistently.");
                 linked[c] = true;
             }
+        }
+
+        // Every live node must be reachable from the root: the tree views walk child chains while
+        // analyses scan the arrays, so an unlinked live node would show up in one but not the other
+        // (and removing it would corrupt the totals). Removed nodes are unlinked on purpose and
+        // marked deleted together with everything below them.
+        if (nodes[0].IsDeleted) throw new InvalidDataException("Snapshot root is marked deleted.");
+        for (var i = 1; i < nodes.Length; i++)
+        {
+            if (nodes[i].IsDeleted) continue;
+            if (!linked[i] || nodes[nodes[i].Parent].IsDeleted)
+                throw new InvalidDataException($"Snapshot node {i} is not reachable from the root.");
         }
     }
 }

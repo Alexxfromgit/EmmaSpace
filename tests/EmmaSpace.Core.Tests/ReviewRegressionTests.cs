@@ -122,6 +122,61 @@ public class ReviewRegressionTests
     }
 
     [Fact]
+    public void Compare_only_accepts_scans_of_the_same_location()
+    {
+        var sep = Path.DirectorySeparatorChar;
+        using var a = TreeFixtures.Sample(Path.Join("data", "A"));
+        using var aWithSlash = TreeFixtures.Sample(Path.Join("data", "A") + sep);
+        using var b = TreeFixtures.Sample(Path.Join("data", "B"));
+        Assert.True(SnapshotDiff.SameLocation(a, aWithSlash));
+        Assert.False(SnapshotDiff.SameLocation(a, b));
+    }
+
+    [Fact]
+    public async Task Saving_copies_the_tree_before_any_removal_can_interleave()
+    {
+        using var tree = TreeFixtures.Sample();
+        var path = Path.Combine(Path.GetTempPath(), "emmaspace-" + Guid.NewGuid().ToString("N") + SnapshotFile.Extension);
+        try
+        {
+            var save = SnapshotFile.SaveAsync(tree, path, TestContext.Current.CancellationToken);
+            // Runs while the save may still be compressing in the background.
+            tree.Remove(TreeFixtures.Find(tree, "videos"));
+            await save;
+
+            using var loaded = await SnapshotFile.LoadAsync(path, TestContext.Current.CancellationToken);
+            Assert.Equal(3365UL, loaded.Nodes[FileTree.Root].Size); // the state when saving started
+            Assert.NotEqual(FileTree.None, TreeFixtures.Find(loaded, "videos"));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void Snapshots_with_unreachable_live_nodes_are_rejected()
+    {
+        var nodes = new EsNode[2];
+        nodes[0] = new EsNode { Parent = EsNode.None, FirstChild = EsNode.None, NextSibling = EsNode.None, Flags = NodeFlags.Directory };
+        nodes[1] = new EsNode { Parent = 0, FirstChild = EsNode.None, NextSibling = EsNode.None, Size = 10 }; // live, but no chain leads to it
+        using var stream = WriteRawSnapshot(nodes, [], nodes.Length, 0);
+        Assert.Throws<InvalidDataException>(() => SnapshotFile.Load(stream));
+    }
+
+    [Fact]
+    public void Snapshots_keep_removed_nodes_unlinked()
+    {
+        using var tree = TreeFixtures.Sample();
+        tree.Remove(TreeFixtures.Find(tree, "docs")); // docs and its children are deleted and unlinked
+        using var stream = new MemoryStream();
+        SnapshotFile.Save(tree, stream);
+        stream.Position = 0;
+        using var loaded = SnapshotFile.Load(stream); // must still validate
+        Assert.Equal(tree.Nodes[FileTree.Root].Size, loaded.Nodes[FileTree.Root].Size);
+    }
+
+    [Fact]
     public void Snapshots_with_cyclic_sibling_chains_are_rejected()
     {
         var nodes = new EsNode[2];

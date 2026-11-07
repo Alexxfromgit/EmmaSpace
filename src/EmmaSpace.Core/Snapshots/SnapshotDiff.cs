@@ -23,6 +23,16 @@ public sealed record DiffReport(ulong OldTotal, ulong NewTotal, IReadOnlyList<Di
 /// <summary>Compares two scans of the same location by matching paths.</summary>
 public static class SnapshotDiff
 {
+    /// <summary>
+    /// Whether two scans are of the same folder or drive. Compare only matches children by name,
+    /// so comparing unrelated locations would report meaningless growth or no changes at all.
+    /// </summary>
+    public static bool SameLocation(FileTree a, FileTree b) =>
+        string.Equals(TrimRoot(a.RootPath), TrimRoot(b.RootPath), FileTree.PathComparison);
+
+    // "C:\" and "C:", "/data/" and "/data" are the same place.
+    private static string TrimRoot(string path) => path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
     public static DiffReport Compare(FileTree older, FileTree newer, int maxResults = 5000, CancellationToken ct = default)
     {
         var changes = new List<DiffEntry>();

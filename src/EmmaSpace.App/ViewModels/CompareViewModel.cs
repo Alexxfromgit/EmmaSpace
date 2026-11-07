@@ -68,6 +68,14 @@ public sealed partial class CompareViewModel(INodeActions actions, IDialogServic
 
         using (older)
         {
+            if (Tree is not { } current) return; // the scan was closed while the file was loading
+            if (!SnapshotDiff.SameLocation(older, current))
+            {
+                await dialogs.ShowErrorAsync("Different location",
+                    $"This snapshot is of \"{older.RootPath}\", but the current scan is of \"{current.RootPath}\". " +
+                    "Open a snapshot of the same folder or drive to compare.");
+                return;
+            }
             await RunAsync((tree, ct) => SnapshotDiff.Compare(older, tree, ct: ct), report =>
             {
                 Changes.Clear();
