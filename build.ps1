@@ -24,6 +24,23 @@ function Invoke-Step([string] $title, [scriptblock] $action) {
     if ($LASTEXITCODE -ne 0) { throw "$title failed (exit $LASTEXITCODE)" }
 }
 
+# Terminals opened before CMake was installed have a stale PATH; reload it from the registry,
+# then fall back to the usual install folders (CMake installer, Visual Studio's bundled copy).
+function Resolve-CMake {
+    if (Get-Command cmake -ErrorAction SilentlyContinue) { return }
+    $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
+    if (Get-Command cmake -ErrorAction SilentlyContinue) { return }
+    $candidates = @("$env:ProgramFiles\CMake\bin\cmake.exe") +
+        (Get-ChildItem "$env:ProgramFiles\Microsoft Visual Studio\*\*\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" -ErrorAction SilentlyContinue |
+            Sort-Object FullName -Descending | ForEach-Object FullName)
+    $found = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+    if (-not $found) {
+        throw "CMake was not found. Install it (winget install Kitware.CMake) or add 'C++ CMake tools for Windows' in the Visual Studio Installer, then open a new terminal."
+    }
+    $env:Path = (Split-Path $found) + ';' + $env:Path
+}
+Resolve-CMake
+
 $preset = $Runtime
 Invoke-Step "Configure native ($preset)" { cmake --preset $preset }
 Invoke-Step "Build native" { cmake --build --preset "$preset-release" }
@@ -50,6 +67,13 @@ if ($Pack) {
     $version = $props.Project.PropertyGroup.Version
     $folder = "artifacts/pack-input/$Runtime"
     $releases = "artifacts/releases/$Runtime"
+    # Velopack refuses to pack a version that is already in the releases folder. Local builds of an
+    # unchanged version replace the old output; real releases bump <Version> (and CI publishes them).
+    $index = Join-Path $releases 'releases.win.json'
+    if ((Test-Path $index) -and ((Get-Content $index -Raw | ConvertFrom-Json).Assets.Version -contains $version)) {
+        Write-Host "Replacing the existing $version build in $releases" -ForegroundColor Yellow
+        Remove-Item -Recurse -Force $releases
+    }
     Invoke-Step "Publish for packaging ($Runtime)" { dotnet publish src/EmmaSpace.App @common -o $folder }
     Invoke-Step "Restore vpk" { dotnet tool restore }
     Invoke-Step "Velopack pack $version" {
