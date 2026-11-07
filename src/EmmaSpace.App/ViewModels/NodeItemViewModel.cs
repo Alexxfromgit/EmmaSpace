@@ -7,6 +7,7 @@ using EmmaSpace.Core.Analysis;
 using EmmaSpace.Core.Formatting;
 using EmmaSpace.Core.Interop;
 using EmmaSpace.Core.Model;
+using EmmaSpace.Core.Platform;
 
 namespace EmmaSpace.App.ViewModels;
 
@@ -81,6 +82,8 @@ public partial class NodeItemViewModel : ObservableObject
     public string Glyph => IsDirectory ? (IsReparse ? "↪" : "▰") : "▪";
 
     public bool CanShowProperties => Actions.CanShowProperties;
+
+    public static string MoveToTrashHeader { get; } = $"Move to {FileActions.TrashName}…";
 
     /// <summary>Re-reads values from the tree, e.g. after something below was deleted.</summary>
     public virtual void Refresh()

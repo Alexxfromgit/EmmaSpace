@@ -31,7 +31,7 @@ folder tree and clean-up tools.
 | Clean-up | Files not modified/opened for 6 months–5 years; empty folder trees |
 | Snapshots | Save a scan (`.emmasnap`, Brotli) and compare it later: what grew, shrank, appeared or vanished |
 | Export | Self-contained HTML report; CSV of folders or of every file |
-| Actions | Open, show in Explorer, copy path, Properties, move to Recycle Bin (asks first; the shell warns before anything would be deleted permanently) |
+| Actions | Open, show in Explorer/Finder, copy path, Properties (Windows), move to Recycle Bin / Trash (asks first; on Windows the shell warns before anything would be deleted permanently; on macOS Finder's "Put Back" works) |
 
 ## Architecture
 
@@ -41,7 +41,7 @@ EmmaSpace.App   Avalonia views, view models, TreemapControl
 EmmaSpace.Core  FileTree (flat arrays) · analyzers · snapshots · export · scanners
       │  LibraryImport, zero-copy spans over native memory
 emmascan.dll    C++20: MFT reader (raw volume) · parallel walker (GetFileInformationByHandleEx) · Recycle Bin (IFileOperation)
-libemmascan     macOS/Linux: parallel walker (openat/fstatat, firmlink and hard-link de-duplication) · Trash (NSFileManager)
+libemmascan     macOS/Linux: parallel walker (openat/fstatat, firmlink and hard-link de-duplication, online-only iCloud items never downloaded) · Trash (NSFileManager)
 ```
 
 Lists use Avalonia 12.1's built-in `TableView` (MIT, part of `Avalonia.Controls`): resizable

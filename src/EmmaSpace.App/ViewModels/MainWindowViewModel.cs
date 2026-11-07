@@ -383,7 +383,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
         ref readonly var n = ref tree.Nodes[node];
         var what = n.IsDirectory ? $"the folder \"{tree.GetName(node)}\" ({n.FileCount:N0} files, {ByteSize.Format(n.Size)})"
                                  : $"\"{tree.GetName(node)}\" ({ByteSize.Format(n.Size)})";
-        var bin = OperatingSystem.IsMacOS() ? "Trash" : "Recycle Bin";
+        var bin = FileActions.TrashName;
         if (!await _dialogs.ConfirmAsync($"Move to {bin}?", $"Move {what} to the {bin}?\n\n{path}", $"Move to {bin}", destructive: true))
             return;
 

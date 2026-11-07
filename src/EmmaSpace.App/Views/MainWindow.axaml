@@ -23,7 +23,7 @@
             <MenuItem Header="Show in tree" Command="{Binding ShowInTreeCommand}" />
             <MenuItem Header="Show in treemap" Command="{Binding ShowInTreemapCommand}" />
             <Separator />
-            <MenuItem Header="Move to Recycle Bin…" Command="{Binding MoveToTrashCommand}" Foreground="{DynamicResource EmmaDangerBrush}" />
+            <MenuItem Header="{x:Static vm:NodeItemViewModel.MoveToTrashHeader}" Command="{Binding MoveToTrashCommand}" Foreground="{DynamicResource EmmaDangerBrush}" />
             <Separator IsVisible="{Binding CanShowProperties}" />
             <MenuItem Header="Properties" Command="{Binding PropertiesCommand}" IsVisible="{Binding CanShowProperties}" />
           </ContextMenu>

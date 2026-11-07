@@ -20,6 +20,9 @@ public interface IFileActions
 
 public sealed partial class FileActions : IFileActions
 {
+    /// <summary>What the platform calls its bin: "Recycle Bin" on Windows, "Trash" on macOS and Linux desktops.</summary>
+    public static string TrashName { get; } = OperatingSystem.IsWindows() ? "Recycle Bin" : "Trash";
+
     public Task MoveToTrashAsync(string path) => Task.Run(() =>
     {
         if (NativeEngine.IsAvailable)
@@ -32,13 +35,13 @@ public sealed partial class FileActions : IFileActions
                 case EsStatus.NotSupported:
                     break; // fall through to the platform tools below
                 case EsStatus.Cancelled:
-                    throw new OperationCanceledException("Moving to the Recycle Bin was cancelled.");
+                    throw new OperationCanceledException($"Moving to the {TrashName} was cancelled.");
                 default:
                     throw new IOException(status switch
                     {
                         EsStatus.NotFound => $"'{path}' no longer exists.",
                         EsStatus.AccessDenied => $"Access to '{path}' was denied.",
-                        _ => $"Could not move '{path}' to the Recycle Bin ({status}).",
+                        _ => $"Could not move '{path}' to the {TrashName} ({status}).",
                     });
             }
         }
@@ -55,7 +58,7 @@ public sealed partial class FileActions : IFileActions
             Run("gio", "trash", path);
             return;
         }
-        throw new PlatformNotSupportedException("Moving to the Recycle Bin needs the native engine on this system.");
+        throw new PlatformNotSupportedException($"Moving to the {TrashName} needs the native engine on this system.");
     });
 
     public void Reveal(string path)
