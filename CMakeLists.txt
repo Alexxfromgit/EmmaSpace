@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(EmmaSpaceNative VERSION 0.1.0 LANGUAGES CXX)
+project(EmmaSpaceNative VERSION 0.1.0 LANGUAGES CXX) # x-release-please-version
 
 option(EMMASCAN_BUILD_TESTS "Build the emmascan unit tests" ON)
 set(EMMASCAN_OUTPUT_DIR "" CACHE PATH "Directory that receives the emmascan shared library")

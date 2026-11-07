@@ -89,6 +89,27 @@
       </Grid>
     </Border>
 
+    <!-- Update ready / result of a manual update check -->
+    <Border DockPanel.Dock="Top" Background="{DynamicResource EmmaSurfaceBrush}" BorderBrush="{DynamicResource EmmaLineBrush}"
+            BorderThickness="0,0,0,1" Padding="14,8" IsVisible="{Binding Updates.IsUpdateReady}">
+      <Grid ColumnDefinitions="*,Auto">
+        <TextBlock Text="{Binding Updates.ReadyText}" TextWrapping="Wrap" VerticalAlignment="Center" />
+        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" Margin="16,0,0,0">
+          <Button Classes="link" Content="What's new" Command="{Binding Updates.ShowReleaseNotesCommand}" VerticalAlignment="Center" />
+          <Button Classes="accent" Content="Restart now" Command="{Binding Updates.RestartToUpdateCommand}" />
+          <Button Classes="subtle" Content="Later" Command="{Binding Updates.DismissCommand}" />
+        </StackPanel>
+      </Grid>
+    </Border>
+    <Border DockPanel.Dock="Top" Background="{DynamicResource EmmaSurfaceBrush}" BorderBrush="{DynamicResource EmmaLineBrush}"
+            BorderThickness="0,0,0,1" Padding="14,6" IsVisible="{Binding Updates.HasStatus}">
+      <Grid ColumnDefinitions="*,Auto">
+        <TextBlock Text="{Binding Updates.StatusText}" Classes="caption" TextWrapping="Wrap" VerticalAlignment="Center" />
+        <Button Grid.Column="1" Classes="subtle" Content="✕" Command="{Binding Updates.DismissCommand}" Padding="6,2"
+                ToolTip.Tip="Dismiss" />
+      </Grid>
+    </Border>
+
     <!-- Status bar -->
     <Border DockPanel.Dock="Bottom" Background="{DynamicResource EmmaSurfaceBrush}" BorderBrush="{DynamicResource EmmaLineBrush}"
             BorderThickness="0,1,0,0" Padding="14,6">
@@ -100,6 +121,19 @@
           <TextBlock Text="{Binding ScanInfoText}" Classes="caption" />
           <TextBlock Text="·" Classes="caption" IsVisible="{Binding HasTree}" />
           <TextBlock Text="{Binding EngineText}" Classes="caption" />
+          <TextBlock Text="·" Classes="caption" />
+          <DropDownButton Classes="subtle" Content="{Binding Updates.VersionText}" Padding="4,0" FontSize="12"
+                          VerticalAlignment="Center" ToolTip.Tip="Version and updates">
+            <DropDownButton.Flyout>
+              <MenuFlyout Placement="TopEdgeAlignedRight">
+                <MenuItem Header="Check for updates" Command="{Binding Updates.CheckCommand}" />
+                <MenuItem Header="Check automatically" ToggleType="CheckBox" IsChecked="{Binding Updates.AutoCheck}"
+                          IsEnabled="{Binding Updates.CanUpdate}" />
+                <Separator />
+                <MenuItem Header="Release notes" Command="{Binding Updates.ShowReleaseNotesCommand}" />
+              </MenuFlyout>
+            </DropDownButton.Flyout>
+          </DropDownButton>
         </StackPanel>
       </Grid>
     </Border>

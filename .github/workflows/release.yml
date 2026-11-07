@@ -1,70 +1,311 @@
 name: Release
 
-# Push a tag like v0.2.0 to build the Windows installer and publish a GitHub release.
-# Velopack downloads the previous release first, so the new one also gets a delta update package.
+# Every push to main updates the Release Please PR (version bump + CHANGELOG.md, from Conventional
+# Commit PR titles). Merging that PR creates the vX.Y.Z tag and a draft GitHub release; the same run
+# then builds, tests and packs every platform with Velopack, uploads installers, update packages and
+# checksums, and publishes the release. Users never see a release without its downloads.
+#
+# Run it by hand with an existing tag to rebuild and replace that release's assets (no delta packages).
 on:
   push:
-    tags: ["v*.*.*"]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to rebuild, e.g. v0.2.0
+        required: true
 
-permissions:
-  contents: write # create the release and upload its assets
+permissions: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
-  windows:
-    runs-on: windows-latest
-    timeout-minutes: 30
+  release-please:
+    # Releases (and the update feed the app reads) live only in the public repository; private
+    # copies of it run CI but never cut releases.
+    if: github.event_name == 'push' && github.repository == 'Alexxfromgit/EmmaSpace'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      created: ${{ steps.rp.outputs.release_created }}
+      tag: ${{ steps.rp.outputs.tag_name }}
     steps:
-      - uses: actions/checkout@v5
+      - id: rp
+        uses: googleapis/release-please-action@v5
+        with:
+          # A PAT or GitHub App token, so CI runs on the release PR (PRs opened with GITHUB_TOKEN
+          # trigger no workflows). Falls back to GITHUB_TOKEN, which works apart from that.
+          token: ${{ secrets.RELEASE_TOKEN || github.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
 
-      - uses: actions/setup-dotnet@v5
+  prepare:
+    needs: release-please
+    if: >-
+      ${{ !cancelled() && github.repository == 'Alexxfromgit/EmmaSpace' &&
+          (needs.release-please.outputs.created == 'true' || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write # draft releases are only visible with write access
+    outputs:
+      tag: ${{ steps.info.outputs.tag }}
+      version: ${{ steps.info.outputs.version }}
+      notes: ${{ steps.info.outputs.notes }}
+    steps:
+      - id: info
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release-please.outputs.tag || inputs.tag }}
+        run: |
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::'$TAG' is not a vX.Y.Z tag"; exit 1
+          fi
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body > notes.md
+          delim="NOTES_$(openssl rand -hex 8)"
+          {
+            echo "tag=$TAG"
+            echo "version=${TAG#v}"
+            echo "notes<<$delim"; cat notes.md; echo; echo "$delim"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    name: build (${{ matrix.rid }})
+    needs: prepare
+    if: ${{ !cancelled() && needs.prepare.result == 'success' }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          # native: CMake preset / artifacts/native folder. test: false for cross-compiled legs
+          # (an x64 runner cannot run ARM64 code) and for the second macOS leg, which ships the same
+          # universal engine the osx-arm64 leg already tested.
+          - { rid: win-x64, os: windows-latest, native: win-x64, arch: x64, test: true }
+          - { rid: win-arm64, os: windows-latest, native: win-arm64, arch: ARM64, test: false }
+          - { rid: osx-arm64, os: macos-latest, native: osx, test: true }
+          - { rid: osx-x64, os: macos-latest, native: osx, test: false }
+          - { rid: linux-x64, os: ubuntu-latest, native: linux-x64, test: true }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write # Azure login for Windows code signing (only used when configured)
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      RID: ${{ matrix.rid }}
+      NATIVE_DIR: ${{ github.workspace }}/artifacts/native/${{ matrix.native }}
+      PACK_INPUT: artifacts/pack-input/${{ matrix.rid }}
+      PACK_OUTPUT: artifacts/releases/${{ matrix.rid }}
+      STAGE: artifacts/stage/${{ matrix.rid }}
+      BUILD_TESTS: ${{ matrix.test && 'ON' || 'OFF' }}
+      HAS_APPLE_SIGNING: ${{ secrets.APPLE_CERT_P12 != '' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
 
-      - name: Version from tag
-        id: version
-        shell: pwsh
-        run: '"value=$("${{ github.ref_name }}".TrimStart("v"))" >> $env:GITHUB_OUTPUT'
+      - name: Install Ninja
+        if: runner.os != 'Windows'
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then brew install ninja || true; fi
+          if [ "$RUNNER_OS" = "Linux" ]; then sudo apt-get update && sudo apt-get install -y ninja-build squashfs-tools; fi # mksquashfs builds the AppImage
 
-      # One command per step, so a failing configure or build stops the release on its own exit code.
-      # Newest Visual Studio on the runner (no developer prompt, so no env leaks into dotnet).
-      - name: Configure native engine
+      # Windows: no -G, so CMake uses the newest Visual Studio (no developer prompt leaking into dotnet).
+      - name: Configure native engine (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
         run: >
-          cmake -S . -B artifacts/native-build/release -A x64
-          "-DEMMASCAN_OUTPUT_DIR=${{ github.workspace }}/artifacts/native/win-x64"
+          cmake -S . -B artifacts/native-build/release -A ${{ matrix.arch }}
+          "-DEMMASCAN_OUTPUT_DIR=$env:NATIVE_DIR" "-DEMMASCAN_BUILD_TESTS=$env:BUILD_TESTS"
+
+      - name: Configure native engine (macOS / Linux)
+        if: runner.os != 'Windows'
+        run: |
+          extra=()
+          if [ "$RUNNER_OS" = "macOS" ]; then extra=("-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64" "-DCMAKE_OSX_DEPLOYMENT_TARGET=12.0"); fi
+          cmake -S . -B artifacts/native-build/release -G Ninja -DCMAKE_BUILD_TYPE=Release \
+                "-DEMMASCAN_OUTPUT_DIR=$NATIVE_DIR" "-DEMMASCAN_BUILD_TESTS=$BUILD_TESTS" "${extra[@]}"
 
       - name: Build native engine
         run: cmake --build artifacts/native-build/release --config Release
 
       - name: Native tests
+        if: matrix.test
         run: ctest --test-dir artifacts/native-build/release -C Release --output-on-failure --no-tests=error
 
-      - name: Check the native engine is packaged
-        shell: pwsh
-        run: if (-not (Test-Path artifacts/native/win-x64/emmascan.dll)) { throw "emmascan.dll was not built" }
-
       - name: .NET tests
+        if: matrix.test
         run: dotnet test --project tests/EmmaSpace.Core.Tests -c Release -p:EmmaSkipNative=true
 
       - name: Publish
         run: >
-          dotnet publish src/EmmaSpace.App -c Release -r win-x64 --self-contained -p:EmmaSkipNative=true
-          -p:Version=${{ steps.version.outputs.value }} -p:DebugType=None -p:CopyDebugSymbolFilesFromPackages=false
-          -o artifacts/pack-input/win-x64
+          dotnet publish src/EmmaSpace.App -c Release -r ${{ matrix.rid }} --self-contained
+          -p:EmmaSkipNative=true -p:EmmaNativePreset=${{ matrix.native }} -p:Version=${{ env.VERSION }}
+          -p:DebugType=None -p:CopyDebugSymbolFilesFromPackages=false -o ${{ env.PACK_INPUT }}
 
-      - name: Package and publish release
+      # Without the engine the app silently falls back to the slower managed scanner; never ship that.
+      - name: Check the native engine is in the package
+        shell: pwsh
+        run: |
+          $lib = @{ Windows = 'emmascan.dll'; macOS = 'libemmascan.dylib'; Linux = 'libemmascan.so' }[$env:RUNNER_OS]
+          if (-not (Test-Path (Join-Path $env:PACK_INPUT $lib))) { throw "$lib is missing from $env:PACK_INPUT" }
+
+      # ---- Optional code signing: each block switches on once its secrets/variables exist.
+      - name: Azure login (Windows signing)
+        if: runner.os == 'Windows' && vars.AZURE_SIGNING_ENDPOINT != ''
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Import Apple certificates (macOS signing)
+        if: runner.os == 'macOS' && env.HAS_APPLE_SIGNING == 'true'
+        env:
+          APPLE_CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          kc_pass="$(openssl rand -hex 16)"
+          echo "$APPLE_CERT_P12" | base64 --decode > "$RUNNER_TEMP/certs.p12"
+          security create-keychain -p "$kc_pass" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$kc_pass" "$keychain"
+          security import "$RUNNER_TEMP/certs.p12" -P "$APPLE_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple: -k "$kc_pass" "$keychain"
+          # Put the new keychain first in the search list, keeping the existing ones (word splitting intended).
+          # shellcheck disable=SC2046
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/certs.p12"
+          xcrun notarytool store-credentials emmaspace --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
+                --password "$APPLE_APP_PASSWORD" --keychain "$keychain"
+          echo "APPLE_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+
+      - name: Pack with Velopack
         shell: pwsh
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          NOTES: ${{ needs.prepare.outputs.notes }}
+          REBUILD: ${{ github.event_name == 'workflow_dispatch' }}
+          AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          AZURE_SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+          APPLE_APP_IDENTITY: ${{ vars.APPLE_APP_IDENTITY }}
+          APPLE_INSTALL_IDENTITY: ${{ vars.APPLE_INSTALL_IDENTITY }}
         run: |
-          $v = "${{ steps.version.outputs.value }}"
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           $repo = "${{ github.server_url }}/${{ github.repository }}"
-          $out = "artifacts/releases/win-x64"
-          $PSNativeCommandUseErrorActionPreference = $true # a failing native command stops the script
           dotnet tool restore
-          # Previous release (if any) enables delta packages; a first release has none, so this may fail.
-          try { dotnet vpk download github --repoUrl $repo --token $env:GH_TOKEN -o $out }
-          catch { Write-Host "No previous release to build deltas from: $_" }
-          dotnet vpk pack --packId EmmaSpace --packVersion $v --packDir artifacts/pack-input/win-x64 --mainExe EmmaSpace.exe `
-            --packTitle "Emma Space" --packAuthors "Alexander Rubtsov" --icon src/EmmaSpace.App/Assets/emmaspace.ico -o $out
-          dotnet vpk upload github --repoUrl $repo --token $env:GH_TOKEN --publish --releaseName "Emma Space $v" `
-            --tag "${{ github.ref_name }}" -o $out
+
+          # The previous release lets vpk build a delta package. There is none before the first release,
+          # and a rebuild of an existing tag skips it (it could be this very version, or a newer one).
+          if ($env:REBUILD -ne 'true') {
+            try { dotnet vpk download github --repoUrl $repo --token $env:GH_TOKEN --channel $env:RID -o $env:PACK_OUTPUT }
+            catch { Write-Host "::warning::No previous $env:RID release to build a delta from: $_" }
+          }
+
+          $notes = Join-Path $env:RUNNER_TEMP 'release-notes.md'
+          Set-Content -Path $notes -Value $env:NOTES -Encoding utf8NoBOM
+
+          $pack = @('vpk', 'pack', '--packId', 'EmmaSpace', '--packVersion', $env:VERSION, '--packDir', $env:PACK_INPUT,
+                    '--packTitle', 'Emma Space', '--packAuthors', 'Alexander Rubtsov', '--runtime', $env:RID,
+                    '--channel', $env:RID, '--releaseNotes', $notes, '--outputDir', $env:PACK_OUTPUT)
+          switch ($env:RUNNER_OS) {
+            'Windows' {
+              $pack += '--mainExe', 'EmmaSpace.exe', '--icon', 'src/EmmaSpace.App/Assets/emmaspace.ico'
+              if ($env:AZURE_SIGNING_ENDPOINT) {
+                $meta = Join-Path $env:RUNNER_TEMP 'azure-signing.json'
+                @{ Endpoint = $env:AZURE_SIGNING_ENDPOINT; CodeSigningAccountName = $env:AZURE_SIGNING_ACCOUNT
+                   CertificateProfileName = $env:AZURE_SIGNING_PROFILE } | ConvertTo-Json | Set-Content $meta
+                $pack += '--azureTrustedSignFile', $meta
+              } else { Write-Host '::warning::Windows code signing is not configured; the installer is unsigned.' }
+            }
+            'macOS' {
+              $pack += '--mainExe', 'EmmaSpace', '--icon', 'src/EmmaSpace.App/Assets/emmaspace.icns',
+                       '--bundleId', 'com.alexxfromgit.emmaspace'
+              if ($env:APPLE_KEYCHAIN) {
+                $pack += '--signAppIdentity', $env:APPLE_APP_IDENTITY, '--signInstallIdentity', $env:APPLE_INSTALL_IDENTITY,
+                         '--notaryProfile', 'emmaspace', '--keychain', $env:APPLE_KEYCHAIN
+              } else { Write-Host '::warning::macOS signing is not configured; the app is not notarized.' }
+            }
+            'Linux' {
+              $pack += '--mainExe', 'EmmaSpace', '--icon', 'src/EmmaSpace.App/Assets/emmaspace.png', '--categories', 'Utility'
+            }
+          }
+          dotnet @pack
+
+      - name: Stage release files
+        shell: bash
+        run: |
+          py=python3; [ "$RUNNER_OS" = "Windows" ] && py=python # Windows' python3 may be a Store stub
+          "$py" build/stage-release.py --pack-dir "$PACK_OUTPUT" --channel "$RID" --version "$VERSION" --out "$STAGE"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ matrix.rid }}
+          path: ${{ env.STAGE }}
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: [prepare, build]
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      id-token: write # build provenance attestations
+      attestations: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.prepare.outputs.tag }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          path: assets
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: assets
+        run: |
+          sha256sum -- * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      # Signed provenance for every download (verify with `gh attestation verify <file> -R <repo>`).
+      # GitHub only offers attestations for public repositories on non-Enterprise plans.
+      - name: Attest build provenance
+        if: ${{ !github.event.repository.private }}
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: assets/*
+
+      - name: Upload assets
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            # A rebuild replaces everything, so no stale package from the earlier build is left behind.
+            gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' |
+              while read -r name; do gh release delete-asset "$TAG" "$name" -R "$GITHUB_REPOSITORY" --yes; done
+          fi
+          gh release upload "$TAG" assets/* --clobber -R "$GITHUB_REPOSITORY"
+
+      - name: Publish release
+        run: |
+          if [ "$(gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = "true" ]; then
+            gh release edit "$TAG" -R "$GITHUB_REPOSITORY" --draft=false --latest
+          fi
+          echo "### Released $TAG" >> "$GITHUB_STEP_SUMMARY"
+          gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json url --jq .url >> "$GITHUB_STEP_SUMMARY"

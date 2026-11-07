@@ -32,6 +32,7 @@ public partial class App : Application
             };
             if (ElevationService.StartupScanPath(desktop.Args) is { } path)
                 window.Opened += (_, _) => viewModel.StartScan(path);
+            window.Opened += (_, _) => _ = viewModel.Updates.CheckOnStartupAsync();
         }
 
         base.OnFrameworkInitializationCompleted();
@@ -44,6 +45,8 @@ public partial class App : Application
         services.AddSingleton<IFileActions, FileActions>();
         services.AddSingleton<SettingsService>();
         services.AddSingleton<ElevationService>();
+        services.AddSingleton<UpdateService>();
+        services.AddSingleton<UpdateViewModel>();
         services.AddSingleton<IDialogService>(_ => new DialogService(window));
         services.AddSingleton<MainWindowViewModel>();
         return services.BuildServiceProvider();

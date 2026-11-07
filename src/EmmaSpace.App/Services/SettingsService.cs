@@ -9,6 +9,7 @@ public sealed class AppSettings
     public int DuplicateMinSizeIndex { get; set; } = 1;
     public int OldFilesAgeIndex { get; set; } = 1;
     public bool OldFilesByAccess { get; set; }
+    public bool CheckForUpdates { get; set; } = true;
 }
 
 [JsonSerializable(typeof(AppSettings))]

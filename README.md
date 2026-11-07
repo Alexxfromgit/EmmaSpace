@@ -5,6 +5,7 @@
 # <img src="src/EmmaSpace.App/Assets/emmaspace.png" alt="" width="36" align="top"> Emma Space
 
 [![CI](https://github.com/Alexxfromgit/EmmaSpace/actions/workflows/ci.yml/badge.svg)](https://github.com/Alexxfromgit/EmmaSpace/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Alexxfromgit/EmmaSpace?sort=semver)](https://github.com/Alexxfromgit/EmmaSpace/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 A fast disk space analyzer for Windows, with macOS and Linux engines in progress. It maps every
@@ -15,6 +16,24 @@ folder tree and clean-up tools.
   walkers (Windows, macOS/Linux) behind a plain C ABI.
 - **C# core** (`src/EmmaSpace.Core`): tree model, analyzers, duplicate finder, snapshots, export.
 - **Avalonia UI** (`src/EmmaSpace.App`): MVVM desktop app on .NET 10, light and dark themes.
+
+## Download
+
+Get the latest version from [Releases](https://github.com/Alexxfromgit/EmmaSpace/releases/latest):
+
+| Platform | Installer | Portable |
+|---|---|---|
+| Windows 10/11 (x64) | `EmmaSpace-win-x64-Setup.exe` | `EmmaSpace-win-x64-Portable.zip` |
+| Windows 11 on ARM | `EmmaSpace-win-arm64-Setup.exe` | `EmmaSpace-win-arm64-Portable.zip` |
+| macOS 12+ (Apple silicon) | `EmmaSpace-osx-arm64-Setup.pkg` | `EmmaSpace-osx-arm64-Portable.zip` |
+| macOS 12+ (Intel) | `EmmaSpace-osx-x64-Setup.pkg` | `EmmaSpace-osx-x64-Portable.zip` |
+| Linux (x64) | `.AppImage` (runs as is, no install) | |
+
+Installed copies update themselves: Emma Space checks for a new release shortly after it starts
+and offers to restart into it (you can turn that off in the version menu in the status bar).
+`SHA256SUMS.txt` on each release lists the checksums of every file. Until the builds are code
+signed, Windows SmartScreen asks you to confirm ("More info" → "Run anyway") and macOS needs
+right-click → Open the first time.
 
 ## Features
 
@@ -90,20 +109,33 @@ macOS / Linux: `./build.sh --test` (CMake ≥ 3.25, Ninja, a C++20 compiler and 
 On Ubuntu 24.04: `sudo apt-get install -y build-essential cmake ninja-build libicu74`.
 
 CI (`.github/workflows/ci.yml`) builds and tests the engine and .NET code on Windows, macOS and
-Linux for every pull request and push to `main`, and uploads a Velopack installer from the Windows
-job as a build artifact.
+Linux for every pull request and push to `main`, cross-compiles Windows ARM64, and uploads Velopack
+installers from the Windows jobs as build artifacts.
 
 ### Releases
 
-Set `<Version>` in `Directory.Build.props`, then tag and push:
+Releases are automated with [Release Please](https://github.com/googleapis/release-please) and
+[Velopack](https://velopack.io); nobody edits version numbers or tags by hand.
 
-```bash
-git tag v0.2.0 && git push origin v0.2.0
-```
+1. Pull requests are squash-merged and their titles follow
+   [Conventional Commits](https://www.conventionalcommits.org): `feat: …` (minor), `fix: …`,
+   `perf: …` or `deps: …` (patch), `feat!: …` or a `BREAKING CHANGE:` footer (breaking; a minor
+   bump while we are on 0.x). `docs`, `ci`, `build`, `test`, `refactor` and `chore` are left out
+   of the release notes. The `PR title` check enforces the format.
+2. After each merge, Release Please keeps a `chore(main): release X.Y.Z` PR up to date. It bumps
+   `<Version>` in `Directory.Build.props` and the CMake project version, and adds the release notes to
+   [`CHANGELOG.md`](CHANGELOG.md).
+3. Merging that PR tags `vX.Y.Z` and creates a draft release. `.github/workflows/release.yml` then
+   builds and tests win-x64, win-arm64, osx-arm64, osx-x64 and linux-x64, packs each with Velopack
+   (a delta update from the previous release too), uploads everything with `SHA256SUMS.txt` and
+   publishes the release.
 
-`.github/workflows/release.yml` builds and tests on Windows, packs with Velopack (including a delta
-from the previous release) and publishes a GitHub release with `EmmaSpace-win-Setup.exe`, a
-portable zip and the update packages.
+To rebuild the files of an existing release, run the *Release* workflow by hand with its tag.
+Windows and macOS code signing switch on automatically once their secrets are configured.
+
+To try an update locally, pack two versions into one folder with `vpk pack` and start the older
+installed app with `EMMASPACE_UPDATE_FEED=<that folder>`; `EMMASPACE_GITHUB_TOKEN` lets it read the
+releases of a private repository.
 
 A plain `dotnet build` (or F5 in Rider) also builds the C++ engine through
 `build/Native.targets`, as long as `cmake` is on `PATH`. Pass `-p:EmmaSkipNative=true` to skip it.
@@ -125,7 +157,7 @@ native/emmascan/      C ABI header, node store, Windows walker + trash, POSIX st
 src/EmmaSpace.Core/   Interop, Model, Scanning, Analysis, Snapshots, Export, Platform
 src/EmmaSpace.App/    App, Views, ViewModels, Controls (treemap, donut, share bar), Services
 tests/                xUnit v3 tests (Microsoft.Testing.Platform)
-build/                Native.targets (CMake from MSBuild), make-icon.ps1
+build/                Native.targets (CMake from MSBuild), make-icon.ps1, make-icns.py, stage-release.py
 branding/             icon source art (make-icon.ps1 builds the .ico from it), README/social preview
 ```
 
@@ -136,8 +168,8 @@ branding/             icon source art (make-icon.ps1 builds the .ico from it), R
    links), but the macOS-only parts (Trash, firmlink and `/System/Volumes` handling) are only
    compiled by CI. Then `getattrlistbulk` for faster enumeration, Full Disk Access guidance, and a
    signed, notarized `.app` via `vpk pack` on macOS.
-2. **Updates**: point Velopack's `UpdateManager` at a release feed (e.g. GitHub Releases) and add
-   "Check for updates"; code-sign the Windows installer.
+2. **Code signing**: sign the Windows installer and sign and notarize the macOS app; the release
+   workflow is ready for both.
 3. MFT: handle a `$MFT` whose runlist spans extension records (currently falls back to the walker),
    overlap reads with parsing.
 4. Multi-select delete, hard-link de-duplication in the Windows walker, treemap search and highlighting.
