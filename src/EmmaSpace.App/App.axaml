@@ -1,0 +1,149 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="EmmaSpace.App.App"
+             Name="Emma Space"
+             RequestedThemeVariant="Default">
+
+  <Application.Resources>
+    <ResourceDictionary>
+      <!-- Fluent derives buttons, tabs, focus and selection accents from these. -->
+      <Color x:Key="SystemAccentColor">#6E4CF5</Color>
+      <Color x:Key="SystemAccentColorDark1">#5B3BE0</Color>
+      <Color x:Key="SystemAccentColorDark2">#4A2DC4</Color>
+      <Color x:Key="SystemAccentColorDark3">#3A22A0</Color>
+      <Color x:Key="SystemAccentColorLight1">#8466FF</Color>
+      <Color x:Key="SystemAccentColorLight2">#9B82FF</Color>
+      <Color x:Key="SystemAccentColorLight3">#B6A4FF</Color>
+
+      <ResourceDictionary.ThemeDictionaries>
+        <ResourceDictionary x:Key="Light">
+          <SolidColorBrush x:Key="EmmaWindowBrush" Color="#F4F3F8" />
+          <SolidColorBrush x:Key="EmmaSurfaceBrush" Color="#FFFFFF" />
+          <SolidColorBrush x:Key="EmmaSurfaceAltBrush" Color="#F9F8FC" />
+          <SolidColorBrush x:Key="EmmaLineBrush" Color="#E3E1EC" />
+          <SolidColorBrush x:Key="EmmaTextBrush" Color="#1C1B24" />
+          <SolidColorBrush x:Key="EmmaMutedBrush" Color="#6C6A7E" />
+          <SolidColorBrush x:Key="EmmaAccentBrush" Color="#6E4CF5" />
+          <SolidColorBrush x:Key="EmmaAccentSoftBrush" Color="#EAE4FF" />
+          <SolidColorBrush x:Key="EmmaTrackBrush" Color="#ECEAF3" />
+          <SolidColorBrush x:Key="EmmaDangerBrush" Color="#D33A4A" />
+          <SolidColorBrush x:Key="EmmaGoodBrush" Color="#1E9E6A" />
+          <SolidColorBrush x:Key="EmmaSelectionBrush" Color="#E4DDFF" />
+        </ResourceDictionary>
+        <ResourceDictionary x:Key="Dark">
+          <SolidColorBrush x:Key="EmmaWindowBrush" Color="#121118" />
+          <SolidColorBrush x:Key="EmmaSurfaceBrush" Color="#1B1A23" />
+          <SolidColorBrush x:Key="EmmaSurfaceAltBrush" Color="#201F2A" />
+          <SolidColorBrush x:Key="EmmaLineBrush" Color="#2D2B3A" />
+          <SolidColorBrush x:Key="EmmaTextBrush" Color="#ECEBF4" />
+          <SolidColorBrush x:Key="EmmaMutedBrush" Color="#9896AD" />
+          <SolidColorBrush x:Key="EmmaAccentBrush" Color="#9B82FF" />
+          <SolidColorBrush x:Key="EmmaAccentSoftBrush" Color="#2C2647" />
+          <SolidColorBrush x:Key="EmmaTrackBrush" Color="#2A2836" />
+          <SolidColorBrush x:Key="EmmaDangerBrush" Color="#FF6B78" />
+          <SolidColorBrush x:Key="EmmaGoodBrush" Color="#4CD69B" />
+          <SolidColorBrush x:Key="EmmaSelectionBrush" Color="#302858" />
+        </ResourceDictionary>
+      </ResourceDictionary.ThemeDictionaries>
+    </ResourceDictionary>
+  </Application.Resources>
+
+  <Application.Styles>
+    <FluentTheme />
+
+    <Style Selector="Window">
+      <Setter Property="Background" Value="{DynamicResource EmmaWindowBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource EmmaTextBrush}" />
+      <Setter Property="FontSize" Value="13" />
+    </Style>
+
+    <!-- Cards and surfaces -->
+    <Style Selector="Border.card">
+      <Setter Property="Background" Value="{DynamicResource EmmaSurfaceBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource EmmaLineBrush}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="12" />
+    </Style>
+
+    <Style Selector="TextBlock.muted">
+      <Setter Property="Foreground" Value="{DynamicResource EmmaMutedBrush}" />
+    </Style>
+    <Style Selector="TextBlock.caption">
+      <Setter Property="Foreground" Value="{DynamicResource EmmaMutedBrush}" />
+      <Setter Property="FontSize" Value="11.5" />
+    </Style>
+    <Style Selector="TextBlock.h1">
+      <Setter Property="FontSize" Value="24" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="TextBlock.h2">
+      <Setter Property="FontSize" Value="15" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="TextBlock.num">
+      <Setter Property="TextAlignment" Value="Right" />
+      <Setter Property="FontFeatures" Value="+tnum" />
+    </Style>
+    <Style Selector="TextBlock.header">
+      <Setter Property="Foreground" Value="{DynamicResource EmmaMutedBrush}" />
+      <Setter Property="FontSize" Value="11.5" />
+      <Setter Property="FontWeight" Value="Medium" />
+    </Style>
+
+    <!-- Buttons -->
+    <!-- "accent" is Fluent's own class; its colours come from SystemAccentColor above. -->
+    <Style Selector="Button.accent">
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Padding" Value="16,7" />
+      <Setter Property="CornerRadius" Value="8" />
+    </Style>
+    <Style Selector="Button.subtle, DropDownButton.subtle">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Padding" Value="10,6" />
+      <Setter Property="CornerRadius" Value="8" />
+    </Style>
+    <Style Selector="Button.link">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Padding" Value="4,2" />
+      <Setter Property="Foreground" Value="{DynamicResource EmmaAccentBrush}" />
+    </Style>
+
+    <!-- Lists and tables: compact rows. :is() also matches TableView/TableViewRow, which derive from ListBox/ListBoxItem. -->
+    <Style Selector=":is(ListBox).rows">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Padding" Value="0" />
+    </Style>
+    <Style Selector=":is(ListBox).rows :is(ListBoxItem)">
+      <Setter Property="Padding" Value="8,0" />
+      <Setter Property="MinHeight" Value="28" />
+      <Setter Property="Height" Value="28" />
+      <Setter Property="CornerRadius" Value="6" />
+      <Setter Property="Margin" Value="4,0" />
+    </Style>
+    <Style Selector=":is(ListBox).rows :is(ListBoxItem):selected /template/ ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource EmmaSelectionBrush}" />
+    </Style>
+    <Style Selector="TableViewColumnHeader">
+      <Setter Property="Background" Value="{DynamicResource EmmaSurfaceAltBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource EmmaMutedBrush}" />
+      <Setter Property="FontSize" Value="11.5" />
+      <Setter Property="FontWeight" Value="Medium" />
+    </Style>
+
+    <Style Selector="TabControl.main TabItem">
+      <Setter Property="FontSize" Value="13.5" />
+      <Setter Property="MinHeight" Value="38" />
+      <Setter Property="Padding" Value="12,0" />
+    </Style>
+
+    <Style Selector="ProgressBar.usage">
+      <Setter Property="MinHeight" Value="6" />
+      <Setter Property="Height" Value="6" />
+      <Setter Property="CornerRadius" Value="3" />
+      <Setter Property="Foreground" Value="{DynamicResource EmmaAccentBrush}" />
+      <Setter Property="Background" Value="{DynamicResource EmmaTrackBrush}" />
+    </Style>
+  </Application.Styles>
+</Application>

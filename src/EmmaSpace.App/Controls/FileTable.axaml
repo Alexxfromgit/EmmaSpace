@@ -1,0 +1,40 @@
+<TableView xmlns="https://github.com/avaloniaui"
+           xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+           xmlns:vm="using:EmmaSpace.App.ViewModels"
+           x:Class="EmmaSpace.App.Controls.FileTable"
+           Classes="rows nodes">
+  <!-- A file list used by several tabs: name · folder · size · modified. Rows get the item menu. -->
+  <TableView.Columns>
+    <TableViewColumn Header="Name" Width="3*">
+      <TableViewColumn.CellTemplate>
+        <DataTemplate x:DataType="vm:NodeItemViewModel">
+          <Grid ColumnDefinitions="16,*" ToolTip.Tip="{Binding Path}" Background="Transparent">
+            <Ellipse Width="8" Height="8" Fill="{Binding CategoryBrush}" VerticalAlignment="Center" HorizontalAlignment="Left" />
+            <TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+          </Grid>
+        </DataTemplate>
+      </TableViewColumn.CellTemplate>
+    </TableViewColumn>
+    <TableViewColumn Header="Folder" Width="2*">
+      <TableViewColumn.CellTemplate>
+        <DataTemplate x:DataType="vm:NodeItemViewModel">
+          <TextBlock Text="{Binding ParentPath}" Classes="muted" TextTrimming="PathSegmentEllipsis" VerticalAlignment="Center" />
+        </DataTemplate>
+      </TableViewColumn.CellTemplate>
+    </TableViewColumn>
+    <TableViewColumn Header="Size" Width="88" HorizontalContentAlignment="Right">
+      <TableViewColumn.CellTemplate>
+        <DataTemplate x:DataType="vm:NodeItemViewModel">
+          <TextBlock Text="{Binding SizeText}" Classes="num" VerticalAlignment="Center" />
+        </DataTemplate>
+      </TableViewColumn.CellTemplate>
+    </TableViewColumn>
+    <TableViewColumn Header="Modified" Width="96" HorizontalContentAlignment="Right">
+      <TableViewColumn.CellTemplate>
+        <DataTemplate x:DataType="vm:NodeItemViewModel">
+          <TextBlock Text="{Binding ModifiedText}" Classes="num muted" VerticalAlignment="Center" />
+        </DataTemplate>
+      </TableViewColumn.CellTemplate>
+    </TableViewColumn>
+  </TableView.Columns>
+</TableView>

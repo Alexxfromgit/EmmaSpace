@@ -1,0 +1,30 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/EmmaSpace.Core/EmmaSpace.Core.csproj" />
+    <Project Path="src/EmmaSpace.App/EmmaSpace.App.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/EmmaSpace.Core.Tests/EmmaSpace.Core.Tests.csproj" />
+  </Folder>
+  <Folder Name="/native/">
+    <File Path="CMakeLists.txt" />
+    <File Path="CMakePresets.json" />
+  </Folder>
+  <Folder Name="/build/">
+    <File Path="README.md" />
+    <File Path="LICENSE" />
+    <File Path="CONTRIBUTING.md" />
+    <File Path="SECURITY.md" />
+    <File Path=".github/workflows/ci.yml" />
+    <File Path=".github/workflows/release.yml" />
+    <File Path=".github/dependabot.yml" />
+    <File Path=".config/dotnet-tools.json" />
+    <File Path="build/Native.targets" />
+    <File Path="build/make-icon.ps1" />
+    <File Path="build.ps1" />
+    <File Path="build.sh" />
+    <File Path="Directory.Build.props" />
+    <File Path="Directory.Packages.props" />
+    <File Path="global.json" />
+  </Folder>
+</Solution>
