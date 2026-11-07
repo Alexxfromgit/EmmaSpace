@@ -15,7 +15,10 @@ public sealed class NativeScanner : IScanner
         CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(rootPath);
-        return Task.Factory.StartNew(() => Scan(rootPath, options, progress, cancellationToken), cancellationToken,
+        // The engine needs an absolute path (on Windows it prefixes \\?\, which does not resolve
+        // relative paths), so normalize exactly like the managed scanner.
+        var root = ManagedScanner.NormalizeRoot(rootPath);
+        return Task.Factory.StartNew(() => Scan(root, options, progress, cancellationToken), cancellationToken,
             TaskCreationOptions.LongRunning, TaskScheduler.Default);
     }
 

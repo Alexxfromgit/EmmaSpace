@@ -1,4 +1,5 @@
 #include "mft_parser.h"
+#include "../time_util.h"
 
 #include <algorithm>
 #include <cstring>
@@ -15,7 +16,7 @@ T read(const uint8_t* p) {
 
 int64_t filetime_to_unix_ms(int64_t ft) {
     constexpr int64_t epoch_diff = 116444736000000000LL;
-    return ft <= epoch_diff ? 0 : (ft - epoch_diff) / 10000;
+    return ft <= epoch_diff ? 0 : clamp_unix_ms((ft - epoch_diff) / 10000);
 }
 
 } // namespace

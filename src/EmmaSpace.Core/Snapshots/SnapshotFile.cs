@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using System.Runtime.InteropServices;
 using System.Text;
+using EmmaSpace.Core.Formatting;
 using EmmaSpace.Core.Interop;
 using EmmaSpace.Core.Model;
 
@@ -82,8 +83,12 @@ public static class SnapshotFile
         if (version != FormatVersion) throw new InvalidDataException($"Unsupported snapshot version {version}.");
 
         var rootPath = reader.ReadString();
-        var scannedAt = DateTimeOffset.FromUnixTimeMilliseconds(reader.ReadInt64()).ToLocalTime();
-        var elapsed = TimeSpan.FromMilliseconds(reader.ReadInt64());
+        var scannedAtMs = reader.ReadInt64();
+        var elapsedMs = reader.ReadInt64();
+        if (!UnixTime.IsValid(scannedAtMs) || elapsedMs < 0 || elapsedMs > (long)TimeSpan.MaxValue.TotalMilliseconds)
+            throw new InvalidDataException("Snapshot header has an invalid date or duration.");
+        var scannedAt = DateTimeOffset.FromUnixTimeMilliseconds(scannedAtMs).ToLocalTime();
+        var elapsed = TimeSpan.FromMilliseconds(elapsedMs);
         var mode = (ScanMode)reader.ReadInt32();
         reader.ReadInt32(); // original scan source, informational
         var errors = reader.ReadInt32();
@@ -138,7 +143,8 @@ public static class SnapshotFile
             var linksOk = (n.Parent == EsNode.None ? i == 0 : n.Parent < i) &&
                           (n.FirstChild == EsNode.None || (n.FirstChild > i && n.FirstChild < count)) &&
                           (n.NextSibling == EsNode.None || n.NextSibling < count);
-            if (!linksOk || (long)n.NameOffset + n.NameLength > namesLength)
+            if (!linksOk || (long)n.NameOffset + n.NameLength > namesLength || !UnixTime.IsValid(n.MTime) ||
+                !UnixTime.IsValid(n.ATime))
                 throw new InvalidDataException($"Snapshot node {i} is corrupt.");
         }
 

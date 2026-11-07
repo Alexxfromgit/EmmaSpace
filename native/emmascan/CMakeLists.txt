@@ -6,6 +6,7 @@ add_library(emmascan SHARED
     src/ntfs/mft_parser.cpp
     src/ntfs/mft_parser.h
     src/scan_state.h
+    src/time_util.h
 )
 
 if(WIN32)

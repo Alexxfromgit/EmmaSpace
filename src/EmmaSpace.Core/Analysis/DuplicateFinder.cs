@@ -120,6 +120,9 @@ public static class DuplicateFinder
                 if (stream.Length > SampleSize)
                     await ReadIntoAsync(stream, Math.Max(SampleSize, stream.Length - SampleSize), buffer.AsMemory(0, SampleSize), hasher, ct);
             }
+            // Shared for writing, so it may have changed while being read: only trust a hash of a
+            // file that still has the size the group (and its reclaimable bytes) is based on.
+            if ((ulong)stream.Length != expectedSize) return null;
             return hasher.GetCurrentHashAsUInt128();
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)

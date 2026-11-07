@@ -3,6 +3,7 @@
 // feed it synthetic stat data (e.g. iCloud "dataless" entries, which only the system can create).
 
 #include "../node_store.h"
+#include "../time_util.h"
 
 #include <sys/stat.h>
 
@@ -27,7 +28,11 @@ inline const struct timespec& atime_of(const struct stat& st) { return st.st_ati
 #endif
 
 inline int64_t to_unix_ms(const struct timespec& t) {
-    return static_cast<int64_t>(t.tv_sec) * 1000 + t.tv_nsec / 1000000;
+    // Decide out-of-range seconds before multiplying, so absurd dates cannot overflow.
+    const auto sec = static_cast<int64_t>(t.tv_sec);
+    if (sec > kMaxUnixMs / 1000) return kMaxUnixMs;
+    if (sec < kMinUnixMs / 1000) return kMinUnixMs;
+    return clamp_unix_ms(sec * 1000 + t.tv_nsec / 1000000);
 }
 
 // Fills sizes, times, attributes and flags (DIRECTORY, CLOUD, REPARSE for symlinks). Hard-link and firmlink

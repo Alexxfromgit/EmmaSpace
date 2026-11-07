@@ -58,7 +58,7 @@ public partial class NodeItemViewModel : ObservableObject
         get
         {
             var ms = Tree.Nodes[Node].MTime;
-            return ms == 0 ? "" : DateTimeOffset.FromUnixTimeMilliseconds(ms).ToLocalTime().ToString("d", CultureInfo.CurrentCulture);
+            return UnixTime.ToDateTimeOffset(ms)?.ToLocalTime().ToString("d", CultureInfo.CurrentCulture) ?? "";
         }
     }
 
@@ -67,7 +67,7 @@ public partial class NodeItemViewModel : ObservableObject
         get
         {
             var ms = Tree.Nodes[Node].ATime;
-            return ms == 0 ? "" : DateTimeOffset.FromUnixTimeMilliseconds(ms).ToLocalTime().ToString("d", CultureInfo.CurrentCulture);
+            return UnixTime.ToDateTimeOffset(ms)?.ToLocalTime().ToString("d", CultureInfo.CurrentCulture) ?? "";
         }
     }
 

@@ -74,7 +74,7 @@ public static class HtmlReportExporter
         foreach (var node in largest)
         {
             ref readonly var n = ref tree.Nodes[node];
-            var modified = n.MTime == 0 ? "" : DateTimeOffset.FromUnixTimeMilliseconds(n.MTime).ToLocalTime().ToString("d", CultureInfo.CurrentCulture);
+            var modified = UnixTime.ToDateTimeOffset(n.MTime)?.ToLocalTime().ToString("d", CultureInfo.CurrentCulture) ?? "";
             sb.Append("<tr><td class=\"path\">").Append(E(tree.GetPath(node))).Append("</td><td class=\"num\">")
               .Append(ByteSize.Format(n.Size)).Append("</td><td>").Append(E(modified)).Append("</td></tr>");
         }

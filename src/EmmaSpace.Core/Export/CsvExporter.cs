@@ -1,4 +1,5 @@
 using System.Globalization;
+using EmmaSpace.Core.Formatting;
 using EmmaSpace.Core.Model;
 
 namespace EmmaSpace.Core.Export;
@@ -32,7 +33,7 @@ public static class CsvExporter
             var parent = tree.GetParent(node);
             var parentSize = parent == FileTree.None ? n.Size : tree.Nodes[parent].Size;
             var percent = parentSize == 0 ? 0 : n.Size * 100.0 / parentSize;
-            var modified = n.MTime == 0 ? "" : DateTimeOffset.FromUnixTimeMilliseconds(n.MTime).ToString("u", inv);
+            var modified = UnixTime.ToDateTimeOffset(n.MTime)?.ToString("u", inv) ?? "";
 
             writer.Write(Escape(tree.GetPath(node)));
             writer.Write(n.IsDirectory ? ",Folder," : ",File,");

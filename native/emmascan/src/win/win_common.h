@@ -9,6 +9,7 @@
 #include <windows.h>
 
 #include "emmascan/emmascan.h"
+#include "../time_util.h"
 
 #include <cstdint>
 #include <string>
@@ -44,7 +45,7 @@ inline bool is_cloud_placeholder(DWORD attributes) {
 // Windows FILETIME (100 ns since 1601) to Unix epoch milliseconds.
 inline int64_t filetime_to_unix_ms(int64_t ft) {
     constexpr int64_t epoch_diff = 116444736000000000LL;
-    return ft == 0 ? 0 : (ft - epoch_diff) / 10000;
+    return ft == 0 ? 0 : clamp_unix_ms((ft - epoch_diff) / 10000);
 }
 
 inline int64_t filetime_to_unix_ms(const FILETIME& ft) {

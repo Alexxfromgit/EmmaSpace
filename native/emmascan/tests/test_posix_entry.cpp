@@ -67,3 +67,12 @@ TEST_CASE("other file flags are not mistaken for cloud items") {
     CHECK(e.flags == 0);
 }
 #endif
+
+TEST_CASE("absurd timestamps are clamped instead of overflowing") {
+    struct timespec far{};
+    far.tv_sec = static_cast<time_t>(INT64_MAX / 2);
+    CHECK(to_unix_ms(far) == emmascan::kMaxUnixMs);
+    struct timespec normal{};
+    normal.tv_sec = 1704067200; // 2024-01-01
+    CHECK(to_unix_ms(normal) == 1704067200000LL);
+}

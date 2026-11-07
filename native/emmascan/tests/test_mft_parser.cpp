@@ -1,4 +1,5 @@
 #include "ntfs/mft_parser.h"
+#include "time_util.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -304,4 +305,16 @@ TEST_CASE("a subfolder can be the root") {
     CHECK(store.nodes()[0].size == 10);
     CHECK(store.nodes().size() == 2);
     CHECK_FALSE(index.build_tree(31, u"C:\\docs\\a.txt", store, cancel, files, dirs, bytes)); // not a directory
+}
+
+TEST_CASE("dates beyond the year 9999 are clamped") {
+    std::vector<uint8_t> si(48, 0);
+    put<int64_t>(si, 8, INT64_MAX);  // NTFS can store dates up to the year 30828
+    put<int64_t>(si, 24, INT64_MAX);
+    auto record = RecordBuilder(kInUse).resident(kAttrStandardInformation, si).finish();
+    REQUIRE(apply_fixups(record.data(), record.size()));
+    ParsedRecord r;
+    REQUIRE(parse_record(record.data(), record.size(), r));
+    CHECK(r.mtime == emmascan::kMaxUnixMs);
+    CHECK(r.atime == emmascan::kMaxUnixMs);
 }

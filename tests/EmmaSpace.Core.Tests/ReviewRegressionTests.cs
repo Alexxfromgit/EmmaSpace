@@ -1,8 +1,10 @@
 using System.Runtime.InteropServices;
 using System.Text;
 using EmmaSpace.Core.Analysis;
+using EmmaSpace.Core.Formatting;
 using EmmaSpace.Core.Interop;
 using EmmaSpace.Core.Model;
+using EmmaSpace.Core.Scanning;
 using EmmaSpace.Core.Snapshots;
 
 namespace EmmaSpace.Core.Tests;
@@ -176,6 +178,53 @@ public class ReviewRegressionTests
         Assert.Equal(tree.Nodes[FileTree.Root].Size, loaded.Nodes[FileTree.Root].Size);
     }
 
+    [Theory]
+    [InlineData(long.MaxValue, 0L)]
+    [InlineData(0L, long.MaxValue)]
+    [InlineData(0L, -1L)]
+    public void Snapshots_with_invalid_header_times_are_reported_as_invalid(long scannedAtMs, long elapsedMs)
+    {
+        var nodes = new[] { new EsNode { Parent = EsNode.None, FirstChild = EsNode.None, NextSibling = EsNode.None, Flags = NodeFlags.Directory } };
+        using var stream = WriteRawSnapshot(nodes, [], 1, 0, scannedAtMs, elapsedMs);
+        Assert.Throws<InvalidDataException>(() => SnapshotFile.Load(stream));
+    }
+
+    [Fact]
+    public void Snapshots_with_out_of_range_item_times_are_rejected()
+    {
+        var nodes = new[] { new EsNode { Parent = EsNode.None, FirstChild = EsNode.None, NextSibling = EsNode.None, Flags = NodeFlags.Directory, MTime = long.MaxValue } };
+        using var stream = WriteRawSnapshot(nodes, [], 1, 0);
+        Assert.Throws<InvalidDataException>(() => SnapshotFile.Load(stream));
+    }
+
+    [Fact]
+    public void Out_of_range_times_are_shown_as_unknown_instead_of_throwing()
+    {
+        Assert.Null(UnixTime.ToDateTimeOffset(long.MaxValue));
+        Assert.Null(UnixTime.ToDateTimeOffset(0));
+        Assert.Equal(2024, UnixTime.ToDateTimeOffset(1704067200000)!.Value.UtcDateTime.Year);
+    }
+
+    [Fact]
+    public void Scan_roots_are_made_absolute()
+    {
+        Assert.Equal(Path.Combine(Environment.CurrentDirectory, "docs"), ManagedScanner.NormalizeRoot("docs"));
+        if (OperatingSystem.IsWindows()) Assert.Equal(@"C:\", ManagedScanner.NormalizeRoot("C:"));
+        Assert.Throws<ScanException>(() => ManagedScanner.NormalizeRoot("bad" + (char)0 + "path")); // NUL: never valid in a path
+    }
+
+    [Fact]
+    public async Task The_native_scanner_accepts_relative_paths()
+    {
+        Assert.SkipUnless(NativeEngine.IsAvailable, "Native engine not built for this platform.");
+        using var temp = new TempTree();
+        temp.File("a.bin", 1234);
+        var relative = Path.GetRelativePath(Environment.CurrentDirectory, temp.Root);
+        using var tree = await new NativeScanner().ScanAsync(relative, new ScanOptions(), null, TestContext.Current.CancellationToken);
+        Assert.Equal(1234UL, tree.Nodes[FileTree.Root].Size);
+        Assert.True(Path.IsPathFullyQualified(tree.RootPath));
+    }
+
     [Fact]
     public void Snapshots_with_cyclic_sibling_chains_are_rejected()
     {
@@ -200,7 +249,8 @@ public class ReviewRegressionTests
     }
 
     // Writes a snapshot with an arbitrary header (counts) and payload, bypassing SnapshotFile.Save.
-    private static MemoryStream WriteRawSnapshot(EsNode[] nodes, char[] names, int nodeCount, int namesLength)
+    private static MemoryStream WriteRawSnapshot(EsNode[] nodes, char[] names, int nodeCount, int namesLength,
+        long scannedAtMs = 0, long elapsedMs = 0)
     {
         var ms = new MemoryStream();
         using (var w = new BinaryWriter(ms, Encoding.UTF8, leaveOpen: true))
@@ -208,8 +258,8 @@ public class ReviewRegressionTests
             w.Write("EMSNAP01"u8);
             w.Write(1);
             w.Write(@"C:\Root");
-            w.Write(0L);
-            w.Write(0L);
+            w.Write(scannedAtMs);
+            w.Write(elapsedMs);
             w.Write(0);
             w.Write(0);
             w.Write(0);
