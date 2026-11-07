@@ -22,7 +22,6 @@
   "packages": {
     ".": {
       "release-type": "simple",
-      "package-name": "Emma Space",
       "initial-version": "0.1.0",
       "bump-minor-pre-major": true,
       "changelog-path": "CHANGELOG.md",
