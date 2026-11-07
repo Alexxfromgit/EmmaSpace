@@ -15,6 +15,9 @@ add_executable(emmascan_tests
     ../src/node_store.cpp
     ../src/ntfs/mft_parser.cpp
 )
+if(NOT WIN32)
+    target_sources(emmascan_tests PRIVATE test_posix_entry.cpp)
+endif()
 target_include_directories(emmascan_tests PRIVATE ../src)
 target_link_libraries(emmascan_tests PRIVATE emmascan Catch2::Catch2WithMain)
 target_compile_features(emmascan_tests PRIVATE cxx_std_20)

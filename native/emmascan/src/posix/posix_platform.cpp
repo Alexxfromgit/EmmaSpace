@@ -5,19 +5,26 @@
 // - Directories reached twice (macOS firmlinks such as /Users and /System/Volumes/Data/Users
 //   share the same device and inode) are listed once; later sightings are flagged as links.
 // - Symbolic links are recorded but never followed.
+// - Online-only iCloud / File Provider items ("dataless") count only their local bytes; such folders
+//   are not listed, and the worker threads refuse to materialize anything, so a scan never downloads.
 // - When scanning "/", pseudo file systems and other mounted volumes are skipped.
 
 #include "../scan_state.h"
+#include "posix_entry.h"
 
 #include <dirent.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#if defined(__APPLE__)
+#include <sys/resource.h>
+#endif
 #include <unistd.h>
 
 #include <algorithm>
 #include <cerrno>
 #include <condition_variable>
 #include <cstring>
+#include <fstream>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -88,16 +95,6 @@ std::string utf16_to_utf8(std::u16string_view s) {
     return out;
 }
 
-int64_t to_unix_ms(const struct timespec& t) { return static_cast<int64_t>(t.tv_sec) * 1000 + t.tv_nsec / 1000000; }
-
-#if defined(__APPLE__)
-const struct timespec& mtime_of(const struct stat& st) { return st.st_mtimespec; }
-const struct timespec& atime_of(const struct stat& st) { return st.st_atimespec; }
-#else
-const struct timespec& mtime_of(const struct stat& st) { return st.st_mtim; }
-const struct timespec& atime_of(const struct stat& st) { return st.st_atim; }
-#endif
-
 // Below "/", these are kernel/pseudo file systems or other disks, not the startup volume's content.
 bool skip_below_root(const std::string& path) {
     static const char* const skipped[] = {
@@ -110,6 +107,22 @@ bool skip_below_root(const std::string& path) {
     };
     for (const char* s : skipped)
         if (path == s) return true;
+#if defined(__APPLE__)
+    // Firmlinked folders (/Users, /usr/local, /System/Library/Caches, ...) are also reachable through
+    // /System/Volumes/Data. Skip that copy so their content is always credited to the familiar path,
+    // instead of to whichever path a worker thread happens to reach first.
+    static const std::unordered_set<std::string> data_twins = [] {
+        std::unordered_set<std::string> twins;
+        std::ifstream in("/usr/share/firmlinks");
+        for (std::string line; std::getline(in, line);) {
+            const auto tab = line.find('\t');
+            if (tab != std::string::npos && tab + 1 < line.size())
+                twins.insert("/System/Volumes/Data/" + line.substr(tab + 1));
+        }
+        return twins;
+    }();
+    if (data_twins.contains(path)) return true;
+#endif
     return false;
 }
 
@@ -146,6 +159,11 @@ private:
     };
 
     void worker_loop() {
+#if defined(__APPLE__)
+        // Belt and braces next to the SF_DATALESS checks: if something online-only slips through
+        // (e.g. it was evicted mid-scan), fail with EDEADLK instead of downloading it.
+        setiopolicy_np(IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES, IOPOL_SCOPE_THREAD, IOPOL_MATERIALIZE_DATALESS_FILES_OFF);
+#endif
         std::vector<EntryInfo> entries;
         std::vector<std::u16string> names;
         std::vector<std::string> raw_names;
@@ -185,22 +203,21 @@ private:
             struct stat st{};
             if (fstatat(dirfd(dir), d->d_name, &st, AT_SYMLINK_NOFOLLOW) != 0) continue; // vanished meanwhile
 
-            EntryInfo e;
-            e.mtime = to_unix_ms(mtime_of(st));
-            e.atime = to_unix_ms(atime_of(st));
-            e.attributes = static_cast<uint32_t>(st.st_mode);
+            EntryInfo e = describe_entry(st);
             bool go_down = false;
             if (S_ISDIR(st.st_mode)) {
-                e.flags = ES_NODE_DIRECTORY;
                 std::string child = join(item.path, d->d_name);
-                if ((from_root_ && skip_below_root(child)) || !first_visit({st.st_dev, st.st_ino})) e.flags |= ES_NODE_REPARSE;
-                else go_down = true;
+                if (e.flags & ES_NODE_CLOUD) {
+                    // online-only folder: listing it would fetch it from the cloud
+                } else if ((from_root_ && skip_below_root(child)) || !first_visit({st.st_dev, st.st_ino})) {
+                    e.flags |= ES_NODE_REPARSE;
+                } else {
+                    go_down = true;
+                }
                 ++dirs;
             } else {
-                e.size = static_cast<uint64_t>(st.st_size);
-                e.allocated = static_cast<uint64_t>(st.st_blocks) * 512;
                 if (S_ISREG(st.st_mode) && st.st_nlink > 1 && !first_visit({st.st_dev, st.st_ino})) {
-                    e.flags = ES_NODE_HARDLINK;
+                    e.flags |= ES_NODE_HARDLINK;
                     e.size = e.allocated = 0;
                 }
                 bytes += e.size;
