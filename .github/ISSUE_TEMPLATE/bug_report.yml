@@ -1,0 +1,43 @@
+name: Bug report
+description: Something does not work as expected
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Scan C:\
+        2. Open the Duplicates tab
+        3. ...
+  - type: input
+    id: version
+    attributes:
+      label: Emma Space version
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [Windows 11, Windows 10, macOS, Linux, Other]
+    validations:
+      required: true
+  - type: dropdown
+    id: engine
+    attributes:
+      label: Scan engine (shown at the bottom right)
+      options: [Native engine, Native engine · administrator, Managed engine, Don't know]
+  - type: textarea
+    id: details
+    attributes:
+      label: Anything else?
+      description: File system (NTFS, APFS, …), drive size, screenshots, error messages. Please remove personal paths.

@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <IsAotCompatible>true</IsAotCompatible>
+    <RootNamespace>EmmaSpace.Core</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.IO.Hashing" />
+    <InternalsVisibleTo Include="EmmaSpace.Core.Tests" />
+  </ItemGroup>
+
+  <Import Project="$(RepoRoot)build\Native.targets" />
+
+</Project>

@@ -1,0 +1,77 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "windows-base",
+      "hidden": true,
+      "generator": "Visual Studio 18 2026",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    },
+    {
+      "name": "win-x64",
+      "inherits": "windows-base",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/artifacts/native-build/win-x64",
+      "cacheVariables": { "EMMASCAN_OUTPUT_DIR": "${sourceDir}/artifacts/native/win-x64" }
+    },
+    {
+      "name": "win-arm64",
+      "inherits": "windows-base",
+      "architecture": "ARM64",
+      "binaryDir": "${sourceDir}/artifacts/native-build/win-arm64",
+      "cacheVariables": { "EMMASCAN_OUTPUT_DIR": "${sourceDir}/artifacts/native/win-arm64" }
+    },
+    {
+      "name": "osx",
+      "generator": "Ninja Multi-Config",
+      "binaryDir": "${sourceDir}/artifacts/native-build/osx",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" },
+      "cacheVariables": {
+        "CMAKE_OSX_ARCHITECTURES": "arm64;x86_64",
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "12.0",
+        "EMMASCAN_OUTPUT_DIR": "${sourceDir}/artifacts/native/osx"
+      }
+    },
+    {
+      "name": "linux-x64",
+      "generator": "Ninja Multi-Config",
+      "binaryDir": "${sourceDir}/artifacts/native-build/linux-x64",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" },
+      "cacheVariables": { "EMMASCAN_OUTPUT_DIR": "${sourceDir}/artifacts/native/linux-x64" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "win-x64-debug", "configurePreset": "win-x64", "configuration": "Debug" },
+    { "name": "win-x64-release", "configurePreset": "win-x64", "configuration": "Release" },
+    { "name": "win-arm64-release", "configurePreset": "win-arm64", "configuration": "Release" },
+    { "name": "osx-debug", "configurePreset": "osx", "configuration": "Debug" },
+    { "name": "osx-release", "configurePreset": "osx", "configuration": "Release" },
+    { "name": "linux-x64-release", "configurePreset": "linux-x64", "configuration": "Release" }
+  ],
+  "testPresets": [
+    {
+      "name": "win-x64",
+      "configurePreset": "win-x64",
+      "configuration": "Release",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "win-arm64",
+      "configurePreset": "win-arm64",
+      "configuration": "Release",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "osx",
+      "configurePreset": "osx",
+      "configuration": "Release",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "linux-x64",
+      "configurePreset": "linux-x64",
+      "configuration": "Release",
+      "output": { "outputOnFailure": true }
+    }
+  ]
+}

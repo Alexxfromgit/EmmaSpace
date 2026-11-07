@@ -1,0 +1,33 @@
+<Project>
+  <!--
+    Builds the C++ engine (emmascan) with CMake and ships it next to the managed assemblies.
+    Lives in EmmaSpace.Core so it runs once; the library flows to every project that references Core.
+    Pass -p:EmmaSkipNative=true to skip (the app then uses the managed scanner).
+  -->
+  <PropertyGroup>
+    <EmmaNativePreset Condition="'$(EmmaNativePreset)' == '' And $([MSBuild]::IsOSPlatform('Windows')) And '$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'Arm64'">win-arm64</EmmaNativePreset>
+    <EmmaNativePreset Condition="'$(EmmaNativePreset)' == '' And $([MSBuild]::IsOSPlatform('Windows'))">win-x64</EmmaNativePreset>
+    <EmmaNativePreset Condition="'$(EmmaNativePreset)' == '' And $([MSBuild]::IsOSPlatform('OSX'))">osx</EmmaNativePreset>
+    <EmmaNativePreset Condition="'$(EmmaNativePreset)' == '' And $([MSBuild]::IsOSPlatform('Linux'))">linux-x64</EmmaNativePreset>
+    <EmmaNativeDir>$(RepoRoot)artifacts\native\$(EmmaNativePreset)\</EmmaNativeDir>
+    <EmmaNativeBuildDir>$(RepoRoot)artifacts\native-build\$(EmmaNativePreset)\</EmmaNativeBuildDir>
+    <EmmaNativeFile Condition="$([MSBuild]::IsOSPlatform('Windows'))">emmascan.dll</EmmaNativeFile>
+    <EmmaNativeFile Condition="$([MSBuild]::IsOSPlatform('OSX'))">libemmascan.dylib</EmmaNativeFile>
+    <EmmaNativeFile Condition="$([MSBuild]::IsOSPlatform('Linux'))">libemmascan.so</EmmaNativeFile>
+  </PropertyGroup>
+
+  <Target Name="EmmaBuildNative" BeforeTargets="BeforeBuild" Condition="'$(EmmaSkipNative)' != 'true' And '$(EmmaNativePreset)' != '' And '$(DesignTimeBuild)' != 'true'">
+    <Exec Command="cmake --version" StandardOutputImportance="low" ContinueOnError="true" IgnoreExitCode="true">
+      <Output TaskParameter="ExitCode" PropertyName="_EmmaCMakeExit" />
+    </Exec>
+    <Warning Condition="'$(_EmmaCMakeExit)' != '0'" Text="CMake not found; skipping the native engine. Emma Space will use the managed scanner." />
+    <Exec Condition="'$(_EmmaCMakeExit)' == '0' And !Exists('$(EmmaNativeBuildDir)CMakeCache.txt')" Command="cmake --preset $(EmmaNativePreset)" WorkingDirectory="$(RepoRoot)" />
+    <Exec Condition="'$(_EmmaCMakeExit)' == '0'" Command="cmake --build --preset $(EmmaNativePreset)-release --target emmascan" WorkingDirectory="$(RepoRoot)" />
+  </Target>
+
+  <Target Name="EmmaIncludeNative" AfterTargets="EmmaBuildNative" BeforeTargets="AssignTargetPaths" Condition="'$(EmmaNativeFile)' != ''">
+    <ItemGroup Condition="Exists('$(EmmaNativeDir)$(EmmaNativeFile)')">
+      <None Include="$(EmmaNativeDir)$(EmmaNativeFile)" Link="$(EmmaNativeFile)" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    </ItemGroup>
+  </Target>
+</Project>

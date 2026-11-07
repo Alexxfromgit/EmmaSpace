@@ -1,0 +1,505 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:EmmaSpace.App.ViewModels"
+        xmlns:c="using:EmmaSpace.App.Controls"
+        x:Class="EmmaSpace.App.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Title="{Binding WindowTitle}"
+        Icon="avares://EmmaSpace/Assets/emmaspace.ico"
+        Width="1320" Height="840" MinWidth="960" MinHeight="580"
+        WindowStartupLocation="CenterScreen">
+
+  <Window.Styles>
+    <!-- Item menu for rows of tables marked "nodes" (items are NodeItemViewModel) and the treemap.
+         The Template builds one menu per control. -->
+    <Style Selector=":is(Control).node, TableView.nodes TableViewRow">
+      <Setter Property="ContextMenu">
+        <Template>
+          <ContextMenu x:DataType="vm:NodeItemViewModel">
+            <MenuItem Header="Open" Command="{Binding OpenCommand}" />
+            <MenuItem Header="Show in folder" Command="{Binding RevealCommand}" />
+            <MenuItem Header="Copy path" Command="{Binding CopyPathCommand}" />
+            <Separator />
+            <MenuItem Header="Show in tree" Command="{Binding ShowInTreeCommand}" />
+            <MenuItem Header="Show in treemap" Command="{Binding ShowInTreemapCommand}" />
+            <Separator />
+            <MenuItem Header="{x:Static vm:NodeItemViewModel.MoveToTrashHeader}" Command="{Binding MoveToTrashCommand}" Foreground="{DynamicResource EmmaDangerBrush}" />
+            <Separator IsVisible="{Binding CanShowProperties}" />
+            <MenuItem Header="Properties" Command="{Binding PropertiesCommand}" IsVisible="{Binding CanShowProperties}" />
+          </ContextMenu>
+        </Template>
+      </Setter>
+    </Style>
+  </Window.Styles>
+
+  <DockPanel>
+    <!-- Top bar -->
+    <Border DockPanel.Dock="Top" Background="{DynamicResource EmmaSurfaceBrush}" BorderBrush="{DynamicResource EmmaLineBrush}"
+            BorderThickness="0,0,0,1" Padding="14,10">
+      <Grid ColumnDefinitions="Auto,*,Auto">
+        <Button Classes="subtle" Command="{Binding GoHomeCommand}" Padding="4" ToolTip.Tip="Start page">
+          <StackPanel Orientation="Horizontal" Spacing="10">
+            <Image Source="avares://EmmaSpace/Assets/emmaspace.png" Width="32" Height="32"
+                   RenderOptions.BitmapInterpolationMode="HighQuality" />
+
+            <TextBlock Text="Emma Space" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" />
+          </StackPanel>
+        </Button>
+
+        <Grid Grid.Column="1" ColumnDefinitions="*,Auto,Auto,Auto" Margin="20,0" MaxWidth="900" HorizontalAlignment="Stretch">
+          <TextBox Text="{Binding PathText}" PlaceholderText="{x:Static vm:MainWindowViewModel.PathPlaceholder}" VerticalContentAlignment="Center"
+                   CornerRadius="8" IsEnabled="{Binding !IsScanning}">
+            <TextBox.KeyBindings>
+              <KeyBinding Gesture="Enter" Command="{Binding ScanCommand}" />
+            </TextBox.KeyBindings>
+          </TextBox>
+          <Button Grid.Column="1" Content="Browse…" Command="{Binding BrowseCommand}" Margin="8,0,0,0" CornerRadius="8"
+                  Padding="14,7" IsEnabled="{Binding !IsScanning}" />
+          <Panel Grid.Column="2" Margin="8,0,0,0">
+            <Button Classes="accent" Content="Analyze" Command="{Binding ScanCommand}" IsVisible="{Binding !IsScanning}" />
+            <Button Content="Cancel" Command="{Binding CancelScanCommand}" IsVisible="{Binding IsScanning}" CornerRadius="8" Padding="16,7" />
+          </Panel>
+          <Button Grid.Column="3" Classes="subtle" Content="⚡ Fast scan" Command="{Binding FastScanCommand}" Margin="4,0,0,0"
+                  IsVisible="{Binding CanElevate}" IsEnabled="{Binding !IsScanning}"
+                  ToolTip.Tip="Restart as administrator and read the NTFS master file table directly (much faster)" />
+        </Grid>
+
+        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="2" IsVisible="{Binding HasTree}">
+          <Button Classes="subtle" Content="Rescan" Command="{Binding RescanCommand}" />
+          <DropDownButton Classes="subtle" Content="Snapshot">
+            <DropDownButton.Flyout>
+              <MenuFlyout Placement="BottomEdgeAlignedRight">
+                <MenuItem Header="Save snapshot…" Command="{Binding SaveSnapshotCommand}" />
+                <MenuItem Header="Open snapshot…" Command="{Binding OpenSnapshotCommand}" />
+              </MenuFlyout>
+            </DropDownButton.Flyout>
+          </DropDownButton>
+          <DropDownButton Classes="subtle" Content="Export">
+            <DropDownButton.Flyout>
+              <MenuFlyout Placement="BottomEdgeAlignedRight">
+                <MenuItem Header="HTML report…" Command="{Binding ExportHtmlCommand}" />
+                <MenuItem Header="CSV – folders…" Command="{Binding ExportFoldersCsvCommand}" />
+                <MenuItem Header="CSV – all files…" Command="{Binding ExportAllCsvCommand}" />
+              </MenuFlyout>
+            </DropDownButton.Flyout>
+          </DropDownButton>
+        </StackPanel>
+        <Button Grid.Column="2" Classes="subtle" Content="Open snapshot…" Command="{Binding OpenSnapshotCommand}"
+                IsVisible="{Binding IsHome}" />
+      </Grid>
+    </Border>
+
+    <!-- Status bar -->
+    <Border DockPanel.Dock="Bottom" Background="{DynamicResource EmmaSurfaceBrush}" BorderBrush="{DynamicResource EmmaLineBrush}"
+            BorderThickness="0,1,0,0" Padding="14,6">
+      <Grid ColumnDefinitions="Auto,*,Auto">
+        <TextBlock Text="{Binding TotalText}" Classes="caption" VerticalAlignment="Center" />
+        <TextBlock Grid.Column="1" Text="{Binding HoverText}" Classes="caption" Margin="24,0" TextTrimming="PathSegmentEllipsis"
+                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6">
+          <TextBlock Text="{Binding ScanInfoText}" Classes="caption" />
+          <TextBlock Text="·" Classes="caption" IsVisible="{Binding HasTree}" />
+          <TextBlock Text="{Binding EngineText}" Classes="caption" />
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <Panel>
+      <!-- Start page -->
+      <ScrollViewer IsVisible="{Binding IsHome}">
+        <StackPanel Margin="40,36" MaxWidth="1100" HorizontalAlignment="Center" Spacing="6">
+          <TextBlock Text="What's using your space?" Classes="h1" />
+          <TextBlock Text="Pick a drive or folder. Emma Space maps every file so you can see what is big, old or duplicated."
+                     Classes="muted" TextWrapping="Wrap" Margin="0,0,0,18" />
+          <ItemsControl ItemsSource="{Binding Drives}">
+            <ItemsControl.ItemsPanel>
+              <ItemsPanelTemplate>
+                <WrapPanel />
+              </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:DriveViewModel">
+                <Button Width="300" Margin="0,0,14,14" Padding="0" Background="Transparent" BorderThickness="0"
+                        Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).ScanDriveCommand}"
+                        CommandParameter="{Binding}" HorizontalContentAlignment="Stretch">
+                  <Border Classes="card" Padding="18,16">
+                    <StackPanel Spacing="6">
+                      <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="14.5" TextTrimming="CharacterEllipsis" />
+                      <TextBlock Text="{Binding Subtitle}" Classes="caption" TextTrimming="PathSegmentEllipsis" />
+                      <ProgressBar Classes="usage" Value="{Binding UsedPercent}" Maximum="100" Margin="0,8,0,0"
+                                   IsVisible="{Binding HasUsage}" />
+                      <TextBlock Text="{Binding UsageText}" Classes="caption" />
+                    </StackPanel>
+                  </Border>
+                </Button>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+          <Button Classes="link" Content="Choose another folder…" Command="{Binding BrowseCommand}" HorizontalAlignment="Left" />
+        </StackPanel>
+      </ScrollViewer>
+
+      <!-- Results -->
+      <DockPanel IsVisible="{Binding HasTree}" Margin="12">
+        <Border DockPanel.Dock="Top" Classes="card" Background="{DynamicResource EmmaAccentSoftBrush}" Padding="14,8" Margin="0,0,0,10"
+                IsVisible="{Binding SnapshotBanner, Converter={x:Static ObjectConverters.IsNotNull}}">
+          <TextBlock Text="{Binding SnapshotBanner}" TextWrapping="Wrap" />
+        </Border>
+
+        <Grid ColumnDefinitions="5*,10,6*">
+          <!-- Folder tree -->
+          <Border Classes="card" ClipToBounds="True">
+            <!-- The tree is a flat list of visible rows, so a TableView handles it; the first column draws the hierarchy. -->
+            <TableView x:Name="FolderList" Classes="rows nodes" ItemsSource="{Binding FolderTree.Rows}"
+                       SelectedItem="{Binding FolderTree.SelectedRow}" Padding="0,0,0,4">
+              <TableView.Columns>
+                <TableViewColumn Header="Name" Width="*">
+                  <TableViewColumn.CellTemplate>
+                    <DataTemplate x:DataType="vm:TreeRowViewModel">
+                      <Panel Background="Transparent" ToolTip.Tip="{Binding Name}">
+                        <TextBlock Text="{Binding MoreLabel}" Classes="muted" Margin="{Binding Indent}" Padding="22,0,0,0"
+                                   VerticalAlignment="Center" FontStyle="Italic" IsVisible="{Binding IsMore}" />
+                        <!-- A Grid (not a StackPanel) so the name gets a bounded width and trims. -->
+                        <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto" Margin="{Binding Indent}" VerticalAlignment="Center"
+                              IsVisible="{Binding !IsMore}">
+                          <Button Content="{Binding Expander}" Width="20" Height="20" Padding="0" Background="Transparent"
+                                  BorderThickness="0" FontSize="12" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                                  Command="{Binding $parent[TableView].((vm:MainWindowViewModel)DataContext).ToggleRowCommand}"
+                                  CommandParameter="{Binding}" Focusable="False" />
+                          <Border Grid.Column="1" Width="10" Height="10" CornerRadius="2.5" Background="{Binding CategoryBrush}"
+                                  Margin="2,0,8,0" VerticalAlignment="Center" />
+                          <TextBlock Grid.Column="2" Text="{Binding Name}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                          <TextBlock Grid.Column="3" Text=" ⚠" Foreground="{DynamicResource EmmaDangerBrush}" IsVisible="{Binding HasError}"
+                                     ToolTip.Tip="Some content could not be read" VerticalAlignment="Center" />
+                          <TextBlock Grid.Column="4" Text=" ↪" Classes="muted" IsVisible="{Binding IsReparse}"
+                                     ToolTip.Tip="Link or junction (not followed)" VerticalAlignment="Center" />
+                          <TextBlock Grid.Column="5" Text=" ☁" Classes="muted" IsVisible="{Binding IsCloud}"
+                                     ToolTip.Tip="Cloud item: only the part stored on this PC is counted" VerticalAlignment="Center" />
+                        </Grid>
+                      </Panel>
+                    </DataTemplate>
+                  </TableViewColumn.CellTemplate>
+                </TableViewColumn>
+                <TableViewColumn Header="Size" Width="80" HorizontalContentAlignment="Right">
+                  <TableViewColumn.CellTemplate>
+                    <DataTemplate x:DataType="vm:TreeRowViewModel">
+                      <TextBlock Text="{Binding SizeText}" Classes="num" VerticalAlignment="Center" IsVisible="{Binding !IsMore}" />
+                    </DataTemplate>
+                  </TableViewColumn.CellTemplate>
+                </TableViewColumn>
+                <TableViewColumn Header="Share" Width="120" HorizontalContentAlignment="Stretch">
+                  <TableViewColumn.CellTemplate>
+                    <DataTemplate x:DataType="vm:TreeRowViewModel">
+                      <Grid ColumnDefinitions="*,54" VerticalAlignment="Center" IsVisible="{Binding !IsMore}">
+                        <c:ShareBar Value="{Binding Share}" Fill="{DynamicResource EmmaAccentBrush}" Track="{DynamicResource EmmaTrackBrush}" Height="6" />
+                        <TextBlock Grid.Column="1" Text="{Binding ShareText}" Classes="caption num" />
+                      </Grid>
+                    </DataTemplate>
+                  </TableViewColumn.CellTemplate>
+                </TableViewColumn>
+                <TableViewColumn Header="On disk" Width="80" HorizontalContentAlignment="Right">
+                  <TableViewColumn.CellTemplate>
+                    <DataTemplate x:DataType="vm:TreeRowViewModel">
+                      <TextBlock Text="{Binding AllocatedText}" Classes="num muted" VerticalAlignment="Center" IsVisible="{Binding !IsMore}" />
+                    </DataTemplate>
+                  </TableViewColumn.CellTemplate>
+                </TableViewColumn>
+                <TableViewColumn Header="Files" Width="70" HorizontalContentAlignment="Right">
+                  <TableViewColumn.CellTemplate>
+                    <DataTemplate x:DataType="vm:TreeRowViewModel">
+                      <TextBlock Text="{Binding FilesText}" Classes="num muted" VerticalAlignment="Center" IsVisible="{Binding !IsMore}" />
+                    </DataTemplate>
+                  </TableViewColumn.CellTemplate>
+                </TableViewColumn>
+              </TableView.Columns>
+            </TableView>
+          </Border>
+
+          <GridSplitter Grid.Column="1" Background="Transparent" ResizeDirection="Columns" />
+
+          <!-- Analysis tabs -->
+          <Border Grid.Column="2" Classes="card" ClipToBounds="True">
+            <TabControl Classes="main" SelectedIndex="{Binding SelectedTabIndex}" Padding="0" Margin="8,0,8,0">
+              <TabItem Header="Treemap">
+                <DockPanel Margin="4,4,4,8">
+                  <Grid DockPanel.Dock="Top" ColumnDefinitions="Auto,*" Margin="0,0,0,8">
+                    <Button Classes="subtle" Content="↑ Up" Command="{Binding FocusUpCommand}" Padding="8,4" />
+                    <ItemsControl Grid.Column="1" ItemsSource="{Binding Breadcrumbs}" VerticalAlignment="Center" Margin="6,0,0,0">
+                      <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                          <StackPanel Orientation="Horizontal" />
+                        </ItemsPanelTemplate>
+                      </ItemsControl.ItemsPanel>
+                      <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:BreadcrumbItem">
+                          <StackPanel Orientation="Horizontal">
+                            <Button Classes="link" Content="{Binding Name}" Foreground="{DynamicResource EmmaTextBrush}"
+                                    Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).FocusCommand}"
+                                    CommandParameter="{Binding Node}" />
+                            <TextBlock Text="›" Classes="muted" VerticalAlignment="Center" Margin="2,0" />
+                          </StackPanel>
+                        </DataTemplate>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                  </Grid>
+                  <ItemsControl DockPanel.Dock="Bottom" ItemsSource="{Binding FileTypes.Categories}" Margin="0,8,0,0">
+                    <ItemsControl.ItemsPanel>
+                      <ItemsPanelTemplate>
+                        <WrapPanel />
+                      </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vm:CategoryRowViewModel">
+                        <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,14,2">
+                          <Border Width="10" Height="10" CornerRadius="2.5" Background="{Binding Brush}" VerticalAlignment="Center" />
+                          <TextBlock Text="{Binding Name}" Classes="caption" />
+                        </StackPanel>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                  <Border CornerRadius="8" ClipToBounds="True">
+                    <c:TreemapControl x:Name="Treemap" Classes="node" Tree="{Binding Tree}" FocusNode="{Binding FocusNode}"
+                                      SelectedNode="{Binding SelectedNode}" HoveredNode="{Binding HoveredNode}"
+                                      Revision="{Binding TreeRevision}" Background="{DynamicResource EmmaTrackBrush}" />
+                  </Border>
+                </DockPanel>
+              </TabItem>
+
+              <TabItem Header="File types">
+                <Grid ColumnDefinitions="250,*" Margin="4,4,4,8">
+                  <DockPanel>
+                    <c:DonutChart DockPanel.Dock="Top" Slices="{Binding FileTypes.Slices}" CenterText="{Binding FileTypes.Summary}"
+                                  Foreground="{DynamicResource EmmaTextBrush}" Height="200" Margin="0,4,0,12" />
+                    <ListBox Classes="rows" ItemsSource="{Binding FileTypes.Categories}">
+                      <ListBox.ItemTemplate>
+                        <DataTemplate x:DataType="vm:CategoryRowViewModel">
+                          <Grid ColumnDefinitions="18,*,Auto">
+                            <Border Width="10" Height="10" CornerRadius="2.5" Background="{Binding Brush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" Text="{Binding Name}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="2" VerticalAlignment="Center" Classes="num">
+                              <Run Text="{Binding SizeText}" />
+                              <Run Text="{Binding ShareText}" Foreground="{DynamicResource EmmaMutedBrush}" FontSize="11.5" />
+                            </TextBlock>
+                          </Grid>
+                        </DataTemplate>
+                      </ListBox.ItemTemplate>
+                    </ListBox>
+                  </DockPanel>
+
+                  <Grid Grid.Column="1" RowDefinitions="*,10,Auto,*" Margin="16,0,0,0">
+                    <TableView Classes="rows" ItemsSource="{Binding FileTypes.Extensions}" SelectedItem="{Binding FileTypes.SelectedExtension}">
+                      <TableView.Columns>
+                        <TableViewColumn Header="Extension" Width="*">
+                          <TableViewColumn.CellTemplate>
+                            <DataTemplate x:DataType="vm:ExtensionRowViewModel">
+                              <Grid ColumnDefinitions="16,*">
+                                <Ellipse Width="8" Height="8" Fill="{Binding Brush}" VerticalAlignment="Center" HorizontalAlignment="Left" />
+                                <TextBlock Grid.Column="1" Text="{Binding Extension}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                              </Grid>
+                            </DataTemplate>
+                          </TableViewColumn.CellTemplate>
+                        </TableViewColumn>
+                        <TableViewColumn Header="Category" Width="110">
+                          <TableViewColumn.CellTemplate>
+                            <DataTemplate x:DataType="vm:ExtensionRowViewModel">
+                              <TextBlock Text="{Binding Category}" Classes="muted" VerticalAlignment="Center" />
+                            </DataTemplate>
+                          </TableViewColumn.CellTemplate>
+                        </TableViewColumn>
+                        <TableViewColumn Header="Size" Width="88" HorizontalContentAlignment="Right">
+                          <TableViewColumn.CellTemplate>
+                            <DataTemplate x:DataType="vm:ExtensionRowViewModel">
+                              <TextBlock Text="{Binding SizeText}" Classes="num" VerticalAlignment="Center" />
+                            </DataTemplate>
+                          </TableViewColumn.CellTemplate>
+                        </TableViewColumn>
+                        <TableViewColumn Header="Files" Width="70" HorizontalContentAlignment="Right">
+                          <TableViewColumn.CellTemplate>
+                            <DataTemplate x:DataType="vm:ExtensionRowViewModel">
+                              <TextBlock Text="{Binding CountText}" Classes="num muted" VerticalAlignment="Center" />
+                            </DataTemplate>
+                          </TableViewColumn.CellTemplate>
+                        </TableViewColumn>
+                        <TableViewColumn Header="Share" Width="90" HorizontalContentAlignment="Stretch">
+                          <TableViewColumn.CellTemplate>
+                            <DataTemplate x:DataType="vm:ExtensionRowViewModel">
+                              <c:ShareBar Value="{Binding Share}" Fill="{Binding Brush}" Track="{DynamicResource EmmaTrackBrush}"
+                                          Height="6" VerticalAlignment="Center" />
+                            </DataTemplate>
+                          </TableViewColumn.CellTemplate>
+                        </TableViewColumn>
+                      </TableView.Columns>
+                    </TableView>
+                    <TextBlock Grid.Row="2" Classes="h2" Margin="12,0,0,6">
+                      <Run Text="Largest" />
+                      <Run Text="{Binding FileTypes.SelectedExtension.Extension, FallbackValue=''}" />
+                      <Run Text="files" />
+                    </TextBlock>
+                    <c:FileTable Grid.Row="3" ItemsSource="{Binding FileTypes.ExtensionFiles}" />
+                  </Grid>
+                </Grid>
+              </TabItem>
+
+              <TabItem Header="Largest files">
+                <DockPanel Margin="4,4,4,8">
+                  <TextBlock DockPanel.Dock="Top" Text="{Binding Largest.Summary}" Classes="muted" Margin="12,4,0,8" />
+                  <c:FileTable ItemsSource="{Binding Largest.Files}" SelectedItem="{Binding Largest.SelectedFile}" />
+                </DockPanel>
+              </TabItem>
+
+              <TabItem Header="Duplicates">
+                <DockPanel Margin="4,4,4,8">
+                  <StackPanel DockPanel.Dock="Top" Spacing="8" Margin="8,4,8,10">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                      <TextBlock Text="Minimum size" VerticalAlignment="Center" Classes="muted" />
+                      <ComboBox ItemsSource="{x:Static vm:DuplicatesViewModel.MinSizeOptions}"
+                                SelectedIndex="{Binding Duplicates.MinSizeIndex}" MinWidth="110" />
+                      <Button Classes="accent" Content="Find duplicates" Command="{Binding Duplicates.FindCommand}"
+                              IsVisible="{Binding !Duplicates.IsBusy}" />
+                      <Button Content="Stop" Command="{Binding Duplicates.StopCommand}" IsVisible="{Binding Duplicates.IsBusy}"
+                              CornerRadius="8" Padding="16,7" />
+                    </StackPanel>
+                    <ProgressBar Classes="usage" Value="{Binding Duplicates.ProgressValue}" Maximum="100" IsVisible="{Binding Duplicates.IsBusy}" />
+                    <TextBlock Text="{Binding Duplicates.Status}" Classes="muted" TextWrapping="Wrap" />
+                  </StackPanel>
+                  <Grid RowDefinitions="*,10,Auto,*" IsVisible="{Binding Duplicates.HasRun}">
+                    <TableView Classes="rows" ItemsSource="{Binding Duplicates.Groups}" SelectedItem="{Binding Duplicates.SelectedGroup}">
+                      <TableView.Columns>
+                        <TableViewColumn Header="File" Width="*">
+                          <TableViewColumn.CellTemplate>
+                            <DataTemplate x:DataType="vm:DuplicateGroupViewModel">
+                              <TextBlock Text="{Binding Name}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                            </DataTemplate>
+                          </TableViewColumn.CellTemplate>
+                        </TableViewColumn>
+                        <TableViewColumn Header="Copies" Width="90" HorizontalContentAlignment="Right">
+                          <TableViewColumn.CellTemplate>
+                            <DataTemplate x:DataType="vm:DuplicateGroupViewModel">
+                              <TextBlock Text="{Binding CountText}" Classes="num muted" VerticalAlignment="Center" />
+                            </DataTemplate>
+                          </TableViewColumn.CellTemplate>
+                        </TableViewColumn>
+                        <TableViewColumn Header="Each" Width="88" HorizontalContentAlignment="Right">
+                          <TableViewColumn.CellTemplate>
+                            <DataTemplate x:DataType="vm:DuplicateGroupViewModel">
+                              <TextBlock Text="{Binding SizeText}" Classes="num" VerticalAlignment="Center" />
+                            </DataTemplate>
+                          </TableViewColumn.CellTemplate>
+                        </TableViewColumn>
+                        <TableViewColumn Header="Reclaimable" Width="100" HorizontalContentAlignment="Right">
+                          <TableViewColumn.CellTemplate>
+                            <DataTemplate x:DataType="vm:DuplicateGroupViewModel">
+                              <TextBlock Text="{Binding WastedText}" Classes="num" FontWeight="SemiBold" VerticalAlignment="Center" />
+                            </DataTemplate>
+                          </TableViewColumn.CellTemplate>
+                        </TableViewColumn>
+                      </TableView.Columns>
+                    </TableView>
+                    <TextBlock Grid.Row="2" Text="Copies (right-click to open, reveal or recycle)" Classes="h2" Margin="12,0,0,6" />
+                    <c:FileTable Grid.Row="3" ItemsSource="{Binding Duplicates.SelectedGroup.Files, FallbackValue={x:Null}}" />
+                  </Grid>
+                </DockPanel>
+              </TabItem>
+
+              <TabItem Header="Clean-up">
+                <Grid ColumnDefinitions="3*,12,2*" Margin="4,4,4,8">
+                  <DockPanel>
+                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="8,4,0,6">
+                      <TextBlock Text="Old files" Classes="h2" VerticalAlignment="Center" Margin="0,0,8,0" />
+                      <ComboBox ItemsSource="{x:Static vm:CleanupViewModel.BasisOptions}" SelectedIndex="{Binding Cleanup.BasisIndex}" />
+                      <ComboBox ItemsSource="{x:Static vm:CleanupViewModel.AgeOptions}" SelectedIndex="{Binding Cleanup.AgeIndex}" />
+                    </StackPanel>
+                    <TextBlock DockPanel.Dock="Top" Text="{Binding Cleanup.OldSummary}" Classes="muted" Margin="8,0,0,8" />
+                    <c:FileTable ItemsSource="{Binding Cleanup.OldFiles}" />
+                  </DockPanel>
+                  <DockPanel Grid.Column="2">
+                    <TextBlock DockPanel.Dock="Top" Text="Empty folders" Classes="h2" Margin="8,10,0,10" />
+                    <TextBlock DockPanel.Dock="Top" Text="{Binding Cleanup.EmptySummary}" Classes="muted" Margin="8,0,0,8" />
+                    <ListBox Classes="rows" ItemsSource="{Binding Cleanup.EmptyFolders}">
+                      <ListBox.ItemTemplate>
+                        <DataTemplate x:DataType="vm:NodeItemViewModel">
+                          <TextBlock Text="{Binding Path}" TextTrimming="PathSegmentEllipsis" VerticalAlignment="Center"
+                                     Classes="node" ToolTip.Tip="{Binding Path}" />
+                        </DataTemplate>
+                      </ListBox.ItemTemplate>
+                    </ListBox>
+                  </DockPanel>
+                </Grid>
+              </TabItem>
+
+              <TabItem Header="Compare">
+                <DockPanel Margin="4,4,4,8">
+                  <StackPanel DockPanel.Dock="Top" Spacing="8" Margin="8,4,8,10">
+                    <Button Classes="accent" Content="Compare with snapshot…" Command="{Binding Compare.CompareCommand}" HorizontalAlignment="Left" />
+                    <TextBlock Text="{Binding Compare.Summary}" Classes="muted" TextWrapping="Wrap" />
+                    <ProgressBar IsIndeterminate="True" Classes="usage" IsVisible="{Binding Compare.IsBusy}" />
+                  </StackPanel>
+                  <TableView Classes="rows" ItemsSource="{Binding Compare.Changes}" IsVisible="{Binding Compare.HasResult}">
+                    <TableView.Columns>
+                      <TableViewColumn Header="Change" Width="64">
+                        <TableViewColumn.CellTemplate>
+                          <DataTemplate x:DataType="vm:DiffRowViewModel">
+                            <TextBlock Text="{Binding Kind}" Classes="caption" VerticalAlignment="Center" />
+                          </DataTemplate>
+                        </TableViewColumn.CellTemplate>
+                      </TableViewColumn>
+                      <TableViewColumn Header="Path" Width="*">
+                        <TableViewColumn.CellTemplate>
+                          <DataTemplate x:DataType="vm:DiffRowViewModel">
+                            <TextBlock VerticalAlignment="Center" TextTrimming="PathSegmentEllipsis" ToolTip.Tip="{Binding Path}">
+                              <Run Text="{Binding Glyph}" Foreground="{DynamicResource EmmaMutedBrush}" />
+                              <Run Text="{Binding Path}" />
+                            </TextBlock>
+                          </DataTemplate>
+                        </TableViewColumn.CellTemplate>
+                      </TableViewColumn>
+                      <TableViewColumn Header="Before" Width="88" HorizontalContentAlignment="Right">
+                        <TableViewColumn.CellTemplate>
+                          <DataTemplate x:DataType="vm:DiffRowViewModel">
+                            <TextBlock Text="{Binding OldText}" Classes="num muted" VerticalAlignment="Center" />
+                          </DataTemplate>
+                        </TableViewColumn.CellTemplate>
+                      </TableViewColumn>
+                      <TableViewColumn Header="Now" Width="88" HorizontalContentAlignment="Right">
+                        <TableViewColumn.CellTemplate>
+                          <DataTemplate x:DataType="vm:DiffRowViewModel">
+                            <TextBlock Text="{Binding NewText}" Classes="num" VerticalAlignment="Center" />
+                          </DataTemplate>
+                        </TableViewColumn.CellTemplate>
+                      </TableViewColumn>
+                      <TableViewColumn Header="Difference" Width="100" HorizontalContentAlignment="Right">
+                        <TableViewColumn.CellTemplate>
+                          <DataTemplate x:DataType="vm:DiffRowViewModel">
+                            <TextBlock Text="{Binding DeltaText}" Classes="num" Foreground="{Binding DeltaBrush}"
+                                       FontWeight="SemiBold" VerticalAlignment="Center" />
+                          </DataTemplate>
+                        </TableViewColumn.CellTemplate>
+                      </TableViewColumn>
+                    </TableView.Columns>
+                  </TableView>
+                </DockPanel>
+              </TabItem>
+            </TabControl>
+          </Border>
+        </Grid>
+      </DockPanel>
+
+      <!-- Scan progress -->
+      <Border IsVisible="{Binding IsScanning}" Background="{DynamicResource EmmaWindowBrush}">
+        <Border Classes="card" Width="560" Padding="28,24" HorizontalAlignment="Center" VerticalAlignment="Center">
+          <StackPanel Spacing="10">
+            <TextBlock Text="Mapping your files…" Classes="h2" />
+            <ProgressBar IsIndeterminate="True" Classes="usage" />
+            <Grid ColumnDefinitions="*,Auto" Margin="0,6,0,0">
+              <TextBlock Text="{Binding ProgressBytes}" FontSize="30" FontWeight="SemiBold" />
+              <TextBlock Grid.Column="1" Text="{Binding ProgressElapsed}" Classes="muted" FontSize="16" VerticalAlignment="Bottom" />
+            </Grid>
+            <TextBlock Text="{Binding ProgressFiles}" Classes="muted" />
+            <TextBlock Text="{Binding ProgressPath}" Classes="caption" TextTrimming="PathSegmentEllipsis" />
+            <Button Content="Cancel" Command="{Binding CancelScanCommand}" HorizontalAlignment="Right" CornerRadius="8" Padding="16,7" Margin="0,8,0,0" />
+          </StackPanel>
+        </Border>
+      </Border>
+    </Panel>
+  </DockPanel>
+</Window>
