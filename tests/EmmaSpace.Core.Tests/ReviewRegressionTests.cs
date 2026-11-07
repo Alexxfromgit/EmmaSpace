@@ -201,6 +201,19 @@ public class ReviewRegressionTests
     }
 
     [Fact]
+    public async Task Copies_of_native_trees_keep_their_names_after_the_original_is_disposed()
+    {
+        Assert.SkipUnless(NativeEngine.IsAvailable, "Native engine not built for this platform.");
+        using var temp = new TempTree();
+        temp.File("a.bin", 10);
+        var tree = await new NativeScanner().ScanAsync(temp.Root, new ScanOptions(), null, TestContext.Current.CancellationToken);
+        using var copy = tree.Copy();
+        tree.Dispose(); // the copy's lease keeps the shared name pool alive
+        Assert.Equal("a.bin", copy.GetName((int)copy.Nodes[FileTree.Root].FirstChild));
+        Assert.Equal(10UL, copy.Nodes[FileTree.Root].Size);
+    }
+
+    [Fact]
     public void Snapshots_with_unreachable_live_nodes_are_rejected()
     {
         var nodes = new EsNode[2];

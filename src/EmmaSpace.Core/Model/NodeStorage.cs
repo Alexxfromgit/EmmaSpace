@@ -15,6 +15,12 @@ public abstract class NodeStorage : IDisposable
     /// </summary>
     public virtual IDisposable Lease() => NoLease.Instance;
 
+    /// <summary>
+    /// A storage with its own copy of the nodes that shares this one's name pool (removals only
+    /// change nodes, never names), keeping the shared memory alive until it is disposed.
+    /// </summary>
+    internal virtual NodeStorage CopyNodes() => new ArrayNodeStorage(Nodes.ToArray(), Names.ToArray());
+
     public virtual void Dispose() => GC.SuppressFinalize(this);
 
     private sealed class NoLease : IDisposable
@@ -28,6 +34,8 @@ public sealed class ArrayNodeStorage(EsNode[] nodes, char[] names) : NodeStorage
 {
     public override Span<EsNode> Nodes => nodes;
     public override ReadOnlySpan<char> Names => names;
+
+    internal override NodeStorage CopyNodes() => new ArrayNodeStorage(nodes.ToArray(), names);
 }
 
 /// <summary>Views memory owned by the native engine; nothing is copied.</summary>
@@ -74,6 +82,20 @@ internal sealed unsafe class NativeNodeStorage : NodeStorage
         return new HandleLease(_handle);
     }
 
+    internal override NodeStorage CopyNodes()
+    {
+        var lease = Lease();
+        try
+        {
+            return new LeasedNamesStorage(Nodes.ToArray(), lease, _names, _namesLength);
+        }
+        catch
+        {
+            lease.Dispose();
+            throw;
+        }
+    }
+
     public override void Dispose()
     {
         _handle.Dispose();
@@ -88,5 +110,30 @@ internal sealed unsafe class NativeNodeStorage : NodeStorage
         {
             if (Interlocked.Exchange(ref _released, 1) == 0) handle.DangerousRelease();
         }
+    }
+}
+
+/// <summary>Copied nodes plus a name pool still owned by the native engine, held by a lease.</summary>
+internal sealed unsafe class LeasedNamesStorage(EsNode[] nodes, IDisposable lease, char* names, int namesLength) : NodeStorage
+{
+    private readonly char* _names = names;
+    private bool _disposed;
+
+    public override Span<EsNode> Nodes => nodes;
+
+    public override ReadOnlySpan<char> Names
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            return new ReadOnlySpan<char>(_names, namesLength);
+        }
+    }
+
+    public override void Dispose()
+    {
+        _disposed = true;
+        lease.Dispose();
+        base.Dispose();
     }
 }

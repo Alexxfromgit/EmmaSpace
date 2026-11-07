@@ -14,6 +14,7 @@ namespace EmmaSpace.App.ViewModels;
 public sealed class DiffRowViewModel(DiffEntry entry, IBrush grownBrush, IBrush shrunkBrush)
 {
     public string Path { get; } = entry.Path;
+    public ChangeKind Change { get; } = entry.Kind;
     public string Kind { get; } = entry.Kind switch
     {
         ChangeKind.Added => "New",
@@ -40,6 +41,22 @@ public sealed partial class CompareViewModel(INodeActions actions, IDialogServic
 
     [ObservableProperty]
     public partial bool HasResult { get; private set; }
+
+    public override void OnNodeRemoved()
+    {
+        if (!HasResult || Tree is not { } tree) return;
+        // Rows of items that are now gone no longer describe this scan; "Gone" rows were never in it.
+        var dropped = false;
+        for (var i = Changes.Count - 1; i >= 0; i--)
+        {
+            if (Changes[i].Change == ChangeKind.Removed || tree.FindByPath(Changes[i].Path) != FileTree.None) continue;
+            Changes.RemoveAt(i);
+            dropped = true;
+        }
+        if (dropped && !Summary.EndsWith(StaleNote, StringComparison.Ordinal)) Summary += StaleNote;
+    }
+
+    private const string StaleNote = " · items were removed since, compare again for current totals";
 
     protected override void OnTreeChanged()
     {

@@ -35,12 +35,12 @@ public sealed class FileTree : IDisposable
     public IDisposable Lease() => _storage.Lease();
 
     /// <summary>
-    /// Copies the arrays into a tree of their own. Call it on the thread that changes the tree (the
+    /// Copies the nodes into a tree of their own. Call it on the thread that changes the tree (the
     /// UI thread) before handing work to the background: a lease keeps memory alive but does not
-    /// stop <see cref="Remove"/> from changing totals and sibling order under a reader.
+    /// stop <see cref="Remove"/> from changing totals and sibling order under a reader. The name
+    /// pool is shared, not copied (removals never change it); dispose the copy to release it.
     /// </summary>
-    public FileTree Copy() =>
-        new(new ArrayNodeStorage(Nodes.ToArray(), Names.ToArray()), Info) { SizesApproximate = SizesApproximate };
+    public FileTree Copy() => new(_storage.CopyNodes(), Info) { SizesApproximate = SizesApproximate };
 
     /// <summary>
     /// Incremented by every <see cref="Remove"/>. Background readers of the live tree compare it

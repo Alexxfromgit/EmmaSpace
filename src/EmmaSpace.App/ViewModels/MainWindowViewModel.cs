@@ -153,7 +153,11 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
     private bool CanScan() => !IsScanning;
 
     [RelayCommand(CanExecute = nameof(CanScan))]
-    private Task ScanAsync() => string.IsNullOrWhiteSpace(PathText) ? BrowseAsync() : ScanPathAsync(PathText.Trim());
+    private Task ScanAsync() => string.IsNullOrWhiteSpace(PathText) ? BrowseAsync() : ScanPathAsync(TypedPath(PathText));
+
+    // Stray spaces around typed text are dropped, unless the folder's name really has them
+    // (legal on macOS and Linux).
+    private static string TypedPath(string text) => Directory.Exists(text) ? text : text.Trim();
 
     [RelayCommand(CanExecute = nameof(CanScan))]
     private Task RescanAsync()
@@ -175,7 +179,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
     [RelayCommand]
     private async Task FastScanAsync()
     {
-        var path = Tree?.RootPath ?? (string.IsNullOrWhiteSpace(PathText) ? null : PathText.Trim());
+        var path = Tree?.RootPath ?? (string.IsNullOrWhiteSpace(PathText) ? null : TypedPath(PathText));
         if (!await _dialogs.ConfirmAsync("Fast scan",
                 "Emma Space will restart as administrator so it can read the drive's master file table directly. " +
                 "This is usually many times faster than reading folder by folder.\n\nWindows will ask for permission.",

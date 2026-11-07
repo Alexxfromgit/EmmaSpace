@@ -145,8 +145,13 @@ public static class SnapshotFile
                           (n.FirstChild == EsNode.None || (n.FirstChild > i && n.FirstChild < count && n.IsDirectory)) &&
                           (n.NextSibling == EsNode.None || n.NextSibling < count);
             if (!linksOk || (long)n.NameOffset + n.NameLength > names.Length || !UnixTime.IsValid(n.MTime) ||
-                !UnixTime.IsValid(n.ATime) || (i > 0 && !IsEntryName(names.AsSpan((int)n.NameOffset, n.NameLength))))
+                !UnixTime.IsValid(n.ATime))
                 throw new InvalidDataException($"Snapshot node {i} is corrupt.");
+            // E.g. "a\b", legal on macOS and Linux, in a snapshot opened on Windows: its path would
+            // name a different file here, so the snapshot cannot be shown on this system.
+            if (i > 0 && !IsEntryName(names.AsSpan((int)n.NameOffset, n.NameLength)))
+                throw new InvalidDataException(
+                    $"Snapshot contains a name that is not valid on this system: \"{SafeForMessage(names.AsSpan((int)n.NameOffset, n.NameLength))}\".");
         }
 
         var linked = new bool[nodes.Length];
@@ -211,6 +216,9 @@ public static class SnapshotFile
     private static bool IsEntryName(ReadOnlySpan<char> name) =>
         !name.IsEmpty && name.Length <= MaxNameCharsPerNode && name is not "." and not ".." &&
         name.IndexOfAny(s_forbiddenNameChars) < 0;
+
+    private static string SafeForMessage(ReadOnlySpan<char> name) =>
+        new string(name[..Math.Min(name.Length, 80)]).Replace('\0', '\uFFFD');
 
     // Backslash separates folders only on Windows; elsewhere it is a valid character in names.
     private static readonly System.Buffers.SearchValues<char> s_forbiddenNameChars =

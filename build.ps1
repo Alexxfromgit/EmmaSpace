@@ -45,9 +45,10 @@ $preset = $Runtime
 Invoke-Step "Configure native ($preset)" { cmake --preset $preset }
 Invoke-Step "Build native" { cmake --build --preset "$preset-release" }
 if ($Test) {
-    # Native test binaries only run on a host of the same architecture (an x64 host cannot run ARM64 code).
+    # Native test binaries need a host that can run them: an x64 host cannot run ARM64 code, while
+    # Windows on ARM runs x64 code under emulation.
     $hostArch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()
-    if ($Runtime -eq "win-$hostArch") {
+    if ($Runtime -eq "win-$hostArch" -or ($Runtime -eq 'win-x64' -and $hostArch -eq 'arm64')) {
         Invoke-Step "Native tests" { ctest --preset $preset }
     } else {
         Write-Host "Skipping native tests: $Runtime binaries cannot run on this $hostArch host" -ForegroundColor Yellow
