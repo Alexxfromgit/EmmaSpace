@@ -60,8 +60,9 @@ public static class SnapshotDiff
                 }
                 if (on.Size != nn.Size)
                     changes.Add(new DiffEntry(childPath, nn.IsDirectory, nn.Size > on.Size ? ChangeKind.Grown : ChangeKind.Shrunk, on.Size, nn.Size));
-                if (nn.IsDirectory && (on.Size != nn.Size || on.FileCount != nn.FileCount))
-                    stack.Push((oc, c, childPath));
+                // Always descend: equal totals do not mean equal contents (a rename, or one file
+                // growing while another shrinks, keeps size and count the same).
+                if (nn.IsDirectory) stack.Push((oc, c, childPath));
             }
 
             foreach (var (name, oc) in oldChildren)

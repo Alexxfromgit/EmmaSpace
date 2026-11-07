@@ -97,6 +97,31 @@ public class ReviewRegressionTests
     }
 
     [Fact]
+    public void Diff_finds_changes_in_folders_whose_totals_did_not_change()
+    {
+        static FileTree Build(string fileA, ulong sizeA, string fileB, ulong sizeB)
+        {
+            var b = new TreeBuilder();
+            b.AddRoot(@"C:\Root");
+            var docs = b.AddChild(0, "docs", NodeFlags.Directory);
+            b.AddChild(docs, fileA, NodeFlags.None, sizeA);
+            b.AddChild(docs, fileB, NodeFlags.None, sizeB);
+            return b.Build(Info());
+        }
+
+        // Same folder size and file count: one file renamed, one grew while another shrank.
+        using var older = Build("report.txt", 100, "grows.bin", 50);
+        using var newer = Build("report-final.txt", 70, "grows.bin", 80);
+        var diff = SnapshotDiff.Compare(older, newer, ct: TestContext.Current.CancellationToken);
+
+        var byName = diff.Changes.ToDictionary(c => Path.GetFileName(c.Path), c => c.Kind);
+        Assert.Equal(ChangeKind.Removed, byName["report.txt"]);
+        Assert.Equal(ChangeKind.Added, byName["report-final.txt"]);
+        Assert.Equal(ChangeKind.Grown, byName["grows.bin"]);
+        Assert.False(byName.ContainsKey("docs")); // its total really is unchanged
+    }
+
+    [Fact]
     public void Snapshots_with_cyclic_sibling_chains_are_rejected()
     {
         var nodes = new EsNode[2];

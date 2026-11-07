@@ -88,14 +88,25 @@ public sealed partial class FileActions : IFileActions
         if (OperatingSystem.IsWindows()) SHObjectProperties(nint.Zero, ShopFilePath, path, null);
     }
 
-    private static void Run(string fileName, params string[] args)
+    // Failures (including a missing tool such as gio) surface as IOException, which the app's
+    // trash handler turns into an error dialog.
+    internal static void Run(string fileName, params string[] args)
     {
-        using var process = Process.Start(new ProcessStartInfo(fileName, args)
+        Process? started;
+        try
         {
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        }) ?? throw new IOException($"Could not start {fileName}.");
+            started = Process.Start(new ProcessStartInfo(fileName, args)
+            {
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            });
+        }
+        catch (System.ComponentModel.Win32Exception ex)
+        {
+            throw new IOException($"Could not start {fileName}: {ex.Message}", ex);
+        }
+        using var process = started ?? throw new IOException($"Could not start {fileName}.");
         var error = process.StandardError.ReadToEnd();
         process.WaitForExit();
         if (process.ExitCode != 0) throw new IOException(string.IsNullOrWhiteSpace(error) ? $"{fileName} failed." : error.Trim());
