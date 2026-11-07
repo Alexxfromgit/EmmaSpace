@@ -73,6 +73,8 @@ typedef enum es_scan_phase {
 #define ES_NODE_DELETED   0x10u /* reserved for consumers that remove nodes in place */
 #define ES_NODE_CLOUD     0x20u /* cloud placeholder (e.g. OneDrive): size is the locally stored part only;
                                    on a folder the walker did not descend, to avoid a network fetch */
+#define ES_NODE_HAS_LINKS 0x40u /* file whose size is counted here but that has other hard links;
+                                   deleting this name may not free the space */
 
 typedef struct es_scan_options {
     uint32_t struct_size;     /* sizeof(es_scan_options) */

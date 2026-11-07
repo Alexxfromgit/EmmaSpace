@@ -109,7 +109,7 @@ private:
         uint32_t name_offset;
         uint16_t name_length;
     };
-    static constexpr uint8_t kInUse = 1, kDirectory = 2, kHasName = 4, kHasInfo = 8;
+    static constexpr uint8_t kInUse = 1, kDirectory = 2, kHasName = 4, kHasInfo = 8, kHasLinks = 16;
 
     void add_name(uint32_t frn, const FileNameRef& name);
     bool valid_parent(uint64_t parent, uint16_t parent_sequence, uint32_t child) const;

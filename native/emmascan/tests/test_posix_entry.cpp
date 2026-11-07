@@ -29,6 +29,12 @@ TEST_CASE("a regular file reports logical and allocated size") {
     CHECK(e.flags == 0);
 }
 
+TEST_CASE("a symlink is flagged so nothing follows it") {
+    const auto e = describe_entry(make_stat(S_IFLNK | 0777, 6, 0));
+    CHECK(e.flags == ES_NODE_REPARSE);
+    CHECK(e.size == 6); // the link itself, not its target
+}
+
 TEST_CASE("a directory has no own size") {
     const auto e = describe_entry(make_stat(S_IFDIR | 0755, 4096, 8));
     CHECK(e.size == 0);

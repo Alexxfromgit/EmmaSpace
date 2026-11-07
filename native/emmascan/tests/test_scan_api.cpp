@@ -117,6 +117,8 @@ TEST_CASE("POSIX scan counts hard links once and does not follow symlinks") {
             link_size += n.size;
         }
         if (name_of(result, i) == u"docs-link") docs_link_is_file = !(n.flags & ES_NODE_DIRECTORY);
+        if (name_of(result, i) == u"docs-link" || name_of(result, i) == u"file-link")
+            CHECK((n.flags & ES_NODE_REPARSE) != 0); // symlinks are flagged so nothing follows them
     }
     CHECK(hard_links == 1);          // one of the two names of top.bin
     CHECK(link_size == 0);

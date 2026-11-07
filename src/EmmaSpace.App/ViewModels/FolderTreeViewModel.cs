@@ -22,8 +22,11 @@ public partial class TreeRowViewModel : NodeItemViewModel
     [ObservableProperty]
     public partial bool IsExpanded { get; set; }
 
-    /// <summary>How many children are currently listed below this row (paged for huge folders).</summary>
-    public int ShownChildren { get; set; }
+    /// <summary>
+    /// Children currently listed below this row (huge folders are paged). Tracked by node rather
+    /// than by count, so deletions and re-sorting never make "load more" skip an unseen child.
+    /// </summary>
+    internal HashSet<int> ShownChildren { get; } = [];
 
     public string Expander => !HasChildren ? "" : IsExpanded ? "▾" : "▸";
 
@@ -65,6 +68,7 @@ public sealed class MoreRowViewModel(FileTree tree, TreeRowViewModel owner, int 
 {
     public TreeRowViewModel Owner { get; } = owner;
     public override bool IsMore => true;
+    protected override bool CanAct => false;
     public override string MoreLabel { get; } = $"… {remaining:N0} more items ({ByteSize.Format(remainingBytes)})";
 }
 
@@ -109,7 +113,7 @@ public sealed partial class FolderTreeViewModel(INodeActions actions) : Observab
     {
         if (_tree is null || !row.HasChildren || row.IsExpanded) return;
         row.IsExpanded = true;
-        row.ShownChildren = 0;
+        row.ShownChildren.Clear();
         InsertChildren(row, Rows.IndexOf(row) + 1, Math.Max(PageSize, minimumShown));
     }
 
@@ -146,12 +150,21 @@ public sealed partial class FolderTreeViewModel(INodeActions actions) : Observab
         return row;
     }
 
-    /// <summary>Drops rows of removed nodes and refreshes sizes of the rest.</summary>
+    /// <summary>
+    /// Drops rows of removed nodes (including "more items" rows of removed folders), recounts the
+    /// remaining placeholders and refreshes sizes of the rest.
+    /// </summary>
     public void OnNodeRemoved()
     {
         for (var i = Rows.Count - 1; i >= 0; i--)
         {
-            if (Rows[i] is not MoreRowViewModel && Rows[i].IsDeleted) Rows.RemoveAt(i);
+            if (Rows[i].IsDeleted) Rows.RemoveAt(i);
+        }
+        for (var i = Rows.Count - 1; i >= 0; i--)
+        {
+            if (Rows[i] is not MoreRowViewModel more) continue;
+            Rows.RemoveAt(i);
+            if (CreateMoreRow(more.Owner) is { } updated) Rows.Insert(i, updated);
         }
         foreach (var row in Rows) row.Refresh();
     }
@@ -159,30 +172,30 @@ public sealed partial class FolderTreeViewModel(INodeActions actions) : Observab
     private void InsertChildren(TreeRowViewModel owner, int index, int count)
     {
         var tree = _tree!;
-        var skipped = 0;
         var added = 0;
+        foreach (var child in tree.Children(owner.Node))
+        {
+            if (added == count) break;
+            if (!owner.ShownChildren.Add(child)) continue; // already listed
+            Rows.Insert(index + added, new TreeRowViewModel(tree, child, owner.Depth + 1, actions));
+            added++;
+        }
+        if (CreateMoreRow(owner) is { } more) Rows.Insert(index + added, more);
+    }
+
+    // The "… N more items" row for the live children of `owner` that are not listed yet, or null.
+    private MoreRowViewModel? CreateMoreRow(TreeRowViewModel owner)
+    {
+        var tree = _tree!;
         var remaining = 0;
         ulong remainingBytes = 0;
         foreach (var child in tree.Children(owner.Node))
         {
-            if (skipped < owner.ShownChildren)
-            {
-                skipped++;
-                continue;
-            }
-            if (added < count)
-            {
-                Rows.Insert(index + added, new TreeRowViewModel(tree, child, owner.Depth + 1, actions));
-                added++;
-            }
-            else
-            {
-                remaining++;
-                remainingBytes += tree.Nodes[child].Size;
-            }
+            if (owner.ShownChildren.Contains(child)) continue;
+            remaining++;
+            remainingBytes += tree.Nodes[child].Size;
         }
-        owner.ShownChildren += added;
-        if (remaining > 0) Rows.Insert(index + added, new MoreRowViewModel(tree, owner, remaining, remainingBytes, actions));
+        return remaining == 0 ? null : new MoreRowViewModel(tree, owner, remaining, remainingBytes, actions);
     }
 
     private void LoadMore(MoreRowViewModel more)

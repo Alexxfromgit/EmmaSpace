@@ -268,7 +268,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
             return;
         }
         ref readonly var root = ref Tree.Nodes[FileTree.Root];
-        TotalText = $"{ByteSize.Format(root.Size)} in {root.FileCount:N0} files and {root.DirCount:N0} folders · {ByteSize.Format(root.Allocated)} on disk";
+        TotalText = $"{ByteSize.Format(root.Size)} in {root.FileCount:N0} files and {root.DirCount:N0} folders · {ByteSize.Format(root.Allocated)} on disk" +
+                    (Tree.SizesApproximate ? " · approximate: hard-linked files were removed, rescan for exact totals" : "");
         var info = Tree.Info;
         var source = info.Source switch
         {

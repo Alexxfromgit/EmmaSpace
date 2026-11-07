@@ -67,7 +67,7 @@ jobs:
         run: cmake --build artifacts/native-build/ci --config Release
 
       - name: Native tests
-        run: ctest --test-dir artifacts/native-build/ci -C Release --output-on-failure
+        run: ctest --test-dir artifacts/native-build/ci -C Release --output-on-failure --no-tests=error
 
       - name: Build .NET
         run: dotnet build EmmaSpace.slnx -c Release -p:EmmaSkipNative=true

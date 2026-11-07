@@ -36,6 +36,8 @@ public sealed class TreeBuilder
 
     public void MarkError(int node) => _nodes[node].Flags |= NodeFlags.Error;
 
+    public void AddFlags(int node, NodeFlags flags) => _nodes[node].Flags |= flags;
+
     public FileTree Build(ScanInfo info)
     {
         var nodes = _nodes.AsSpan(0, _count);

@@ -30,7 +30,7 @@ inline int64_t to_unix_ms(const struct timespec& t) {
     return static_cast<int64_t>(t.tv_sec) * 1000 + t.tv_nsec / 1000000;
 }
 
-// Fills sizes, times, attributes and flags (DIRECTORY, CLOUD). Hard-link and firmlink
+// Fills sizes, times, attributes and flags (DIRECTORY, CLOUD, REPARSE for symlinks). Hard-link and firmlink
 // de-duplication need walker state and are applied by the caller.
 // A directory flagged ES_NODE_CLOUD must not be listed.
 inline EntryInfo describe_entry(const struct stat& st) {
@@ -45,6 +45,8 @@ inline EntryInfo describe_entry(const struct stat& st) {
         e.size = static_cast<uint64_t>(st.st_size);
         e.allocated = static_cast<uint64_t>(st.st_blocks) * 512;
         if (cloud) e.size = std::min(e.size, e.allocated); // online-only data takes no local space
+        // A symlink is recorded as itself and flagged, so nothing (e.g. duplicate hashing) follows it.
+        if (S_ISLNK(st.st_mode)) e.flags = ES_NODE_REPARSE;
     }
     if (cloud) e.flags |= ES_NODE_CLOUD;
     return e;

@@ -9,6 +9,7 @@
 #include "win_common.h"
 
 #include <algorithm>
+#include <atomic>
 #include <condition_variable>
 #include <memory>
 #include <mutex>
@@ -37,25 +38,38 @@ class Walker {
 public:
     explicit Walker(es_scan& scan) : scan_(scan) {}
 
-    void run(uint32_t root_node, std::wstring root_path) {
+    // Returns ES_OK, or the first failure of any worker (e.g. ES_ERR_NO_MEMORY).
+    es_status run(uint32_t root_node, std::wstring root_path) {
         stack_.push_back({root_node, std::move(root_path)});
         pending_ = 1;
 
         unsigned threads = scan_.thread_count;
         if (threads == 0) threads = std::clamp(std::thread::hardware_concurrency(), 2u, 32u);
         std::vector<std::thread> workers;
-        workers.reserve(threads);
-        for (unsigned i = 0; i < threads; ++i) workers.emplace_back([this] { worker_loop(); });
+        try {
+            workers.reserve(threads);
+            for (unsigned i = 0; i < threads; ++i) workers.emplace_back([this] { worker_loop(); });
+        } catch (...) {
+            // Could not start every worker: stop the ones that run, then report.
+            record_failure(ES_ERR_INTERNAL);
+        }
+        if (workers.empty()) return ES_ERR_INTERNAL;
         for (auto& t : workers) t.join();
+        return static_cast<es_status>(failure_.load());
     }
 
 private:
     void worker_loop() {
         // 64 KiB is the largest buffer the directory query reliably fills on SMB shares.
         constexpr size_t buffer_size = 64 * 1024;
-        auto buffer = std::make_unique<std::byte[]>(buffer_size);
+        std::unique_ptr<std::byte[]> buffer;
         std::vector<EntryInfo> entries;
         std::vector<std::wstring> names; // owns name storage for `entries`
+        try {
+            buffer = std::make_unique<std::byte[]>(buffer_size);
+        } catch (...) {
+            record_failure(ES_ERR_NO_MEMORY);
+        }
 
         for (;;) {
             WorkItem item;
@@ -67,12 +81,27 @@ private:
                 stack_.pop_back();
             }
 
-            if (!scan_.cancel.load(std::memory_order_relaxed))
-                list_directory(item, buffer.get(), buffer_size, entries, names);
+            // A worker thread must never let an exception escape (that would call std::terminate),
+            // and must always retire its item so the other workers can finish.
+            if (buffer && !scan_.cancel.load(std::memory_order_relaxed)) {
+                try {
+                    list_directory(item, buffer.get(), buffer_size, entries, names);
+                } catch (const std::bad_alloc&) {
+                    record_failure(ES_ERR_NO_MEMORY);
+                } catch (...) {
+                    record_failure(ES_ERR_INTERNAL);
+                }
+            }
 
             std::lock_guard lock(queue_mutex_);
             if (--pending_ == 0) queue_cv_.notify_all();
         }
+    }
+
+    void record_failure(es_status status) {
+        int expected = ES_OK;
+        failure_.compare_exchange_strong(expected, status);
+        scan_.cancel = true; // the other workers drain the queue without listing
     }
 
     void list_directory(const WorkItem& item, std::byte* buffer, size_t buffer_size,
@@ -125,6 +154,9 @@ private:
                     } else {
                         e.size = static_cast<uint64_t>(info->EndOfFile.QuadPart);
                         e.allocated = static_cast<uint64_t>(info->AllocationSize.QuadPart);
+                        // File symlinks: flagged so nothing (e.g. duplicate hashing) follows them.
+                        if ((attrs & FILE_ATTRIBUTE_REPARSE_POINT) && IsReparseTagNameSurrogate(info->EaSize))
+                            e.flags |= ES_NODE_REPARSE;
                         if (is_cloud_placeholder(attrs)) {
                             e.size = std::min(e.size, e.allocated); // online-only data takes no local space
                             e.flags |= ES_NODE_CLOUD;
@@ -179,6 +211,7 @@ private:
     std::condition_variable queue_cv_;
     std::vector<WorkItem> stack_; // LIFO keeps the frontier small (depth-first-ish)
     size_t pending_ = 0;          // queued + in-progress directories
+    std::atomic<int> failure_{ES_OK};
 };
 
 } // namespace
@@ -199,7 +232,14 @@ es_status walk(es_scan& scan, const std::wstring& root_path) {
 
     scan.mode_used = ES_MODE_WALKER;
     scan.phase = ES_PHASE_ENUMERATING;
-    Walker(scan).run(root_node, root_path);
+    // Same rule as for child folders: listing a virtualized cloud folder would make the provider
+    // fetch it from the network, so the root is recorded but not opened.
+    if (data.dwFileAttributes & FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS) {
+        scan.store.nodes()[root_node].flags |= ES_NODE_CLOUD;
+        return ES_OK;
+    }
+    const es_status status = Walker(scan).run(root_node, root_path);
+    if (status != ES_OK) return status;
     return scan.cancel.load() ? ES_ERR_CANCELLED : ES_OK;
 }
 

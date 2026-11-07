@@ -150,22 +150,55 @@ public sealed class FileTree : IDisposable
         while (stack.Count > 0)
         {
             var n = stack.Pop();
-            nodes[n].Flags |= NodeFlags.Deleted;
-            for (var c = ToIndex(nodes[n].FirstChild); c != None; c = ToIndex(nodes[c].NextSibling)) stack.Push(c);
+            ref var removed = ref nodes[n];
+            removed.Flags |= NodeFlags.Deleted;
+            // With hard links counted once, the bytes may still be held by another name.
+            if ((removed.Flags & (NodeFlags.HasLinks | NodeFlags.HardLink)) != 0) SizesApproximate = true;
+            for (var c = ToIndex(removed.FirstChild); c != None; c = ToIndex(nodes[c].NextSibling)) stack.Push(c);
         }
 
+        // Every ancestor shrank, so restore largest-first order among each ancestor's siblings
+        // (the treemap stops at the first zero-size child and relies on that order).
+        for (var a = parent; a != Root && a != None; a = ToIndex(nodes[a].Parent))
+            SortChildren(ToIndex(nodes[a].Parent));
+
         NodeRemoved?.Invoke(node);
+    }
+
+    /// <summary>
+    /// True once a removal touched a file with other hard links: those bytes may still be in use
+    /// under another name, so totals are approximate until the next scan.
+    /// </summary>
+    public bool SizesApproximate { get; private set; }
+
+    private void SortChildren(int node)
+    {
+        var nodes = _storage.Nodes;
+        var children = new List<int>();
+        for (var c = ToIndex(nodes[node].FirstChild); c != None; c = ToIndex(nodes[c].NextSibling)) children.Add(c);
+        if (children.Count < 2) return;
+        var sizes = new ulong[children.Count];
+        for (var i = 0; i < sizes.Length; i++) sizes[i] = nodes[children[i]].Size;
+        // Stable: equal sizes keep their current order.
+        var order = Enumerable.Range(0, children.Count).OrderByDescending(i => sizes[i]).ThenBy(i => i).ToArray();
+        nodes[node].FirstChild = (uint)children[order[0]];
+        for (var k = 0; k < order.Length; k++)
+            nodes[children[order[k]]].NextSibling = k + 1 < order.Length ? (uint)children[order[k + 1]] : EsNode.None;
     }
 
     /// <summary>Finds a node by full path, or <see cref="None"/>.</summary>
     public int FindByPath(string path)
     {
-        var root = RootPath.TrimEnd('\\', '/');
-        var trimmed = path.TrimEnd('\\', '/');
+        var root = RootPath.TrimEnd(s_separators);
+        var trimmed = path.TrimEnd(s_separators);
         if (!trimmed.StartsWith(root, PathComparison)) return None;
-        var rest = trimmed.AsSpan(root.Length).TrimStart(['\\', '/']);
+        // "C:\Root" must not match "C:\Rootbackup": require a separator right after the root.
+        if (trimmed.Length > root.Length && Array.IndexOf(s_separators, trimmed[root.Length]) < 0 &&
+            !EndsWithSeparator(RootPath))
+            return None;
+        var rest = trimmed.AsSpan(root.Length).TrimStart(s_separators);
         var node = Root;
-        foreach (var range in rest.SplitAny(['\\', '/']))
+        foreach (var range in rest.SplitAny(s_separators))
         {
             var part = rest[range];
             if (part.IsEmpty) continue;
@@ -187,7 +220,10 @@ public sealed class FileTree : IDisposable
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal static int ToIndex(uint value) => value == EsNode.None ? None : (int)value;
 
-    private static bool EndsWithSeparator(ReadOnlySpan<char> s) => s.Length > 0 && (s[^1] == '\\' || s[^1] == '/');
+    // Backslash separates folders only on Windows; elsewhere it is a valid character in names.
+    private static readonly char[] s_separators = OperatingSystem.IsWindows() ? ['\\', '/'] : ['/'];
+
+    private static bool EndsWithSeparator(ReadOnlySpan<char> s) => s.Length > 0 && Array.IndexOf(s_separators, s[^1]) >= 0;
 
     public readonly struct ChildEnumerable(FileTree tree, int node)
     {

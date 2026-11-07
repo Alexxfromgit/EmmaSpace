@@ -236,6 +236,10 @@ TEST_CASE("the index builds a tree with links, junctions and extension records")
     add(index, 40, RecordBuilder(kInUse).resident(kAttrStandardInformation, standard_info())
                        .resident(kAttrFileName, file_name(kRootFrn, 5, u"frag.dat")).finish());
     add(index, 41, RecordBuilder(kInUse, 1, 40).non_resident_data(4096, 777, {0x11, 0x01, 0x60, 0x00}).finish());
+    // A file symlink: recorded, flagged as a link, never followed
+    add(index, 42, RecordBuilder(kInUse).resident(kAttrStandardInformation, standard_info(0x420))
+                       .resident(kAttrFileName, file_name(kRootFrn, 5, u"file-link"))
+                       .resident(kAttrReparsePoint, reparse(0xA000000C)).finish());
 
     NodeStore store;
     std::atomic<bool> cancel{false};
@@ -246,9 +250,9 @@ TEST_CASE("the index builds a tree with links, junctions and extension records")
     const auto& root = store.nodes()[0];
     CHECK(name_of(store, 0) == u"C:\\");
     CHECK(root.size == 5000 + 1000 + 400 + 777);
-    CHECK(root.file_count == 5); // a.txt, big.bin, link.bin, photo.jpg, frag.dat
+    CHECK(root.file_count == 6); // a.txt, big.bin, link.bin, photo.jpg, frag.dat, file-link
     CHECK(root.dir_count == 3);  // docs, Junction, OneDrive
-    CHECK(files == 5);
+    CHECK(files == 6);
     CHECK(dirs == 3);
 
     CHECK(child_named(store, 0, u"deleted.tmp") == ES_NONE);
@@ -259,6 +263,12 @@ TEST_CASE("the index builds a tree with links, junctions and extension records")
     REQUIRE(link != ES_NONE);
     CHECK((store.nodes()[link].flags & ES_NODE_HARDLINK) != 0);
     CHECK(store.nodes()[link].size == 0);
+    const uint32_t big = child_named(store, 0, u"big.bin");
+    REQUIRE(big != ES_NONE);
+    CHECK((store.nodes()[big].flags & ES_NODE_HAS_LINKS) != 0); // counted name of a linked file
+    const uint32_t file_link = child_named(store, 0, u"file-link");
+    REQUIRE(file_link != ES_NONE);
+    CHECK((store.nodes()[file_link].flags & ES_NODE_REPARSE) != 0);
 
     const uint32_t junction = child_named(store, 0, u"Junction");
     REQUIRE(junction != ES_NONE);

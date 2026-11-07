@@ -184,6 +184,7 @@ void MftIndex::add_name(uint32_t frn, const FileNameRef& name) {
     }
     if (parent == e.parent_frn && name.name == name_at(e.name_offset, e.name_length)) return; // same link twice
     links_.push_back({frn, parent, parent_sequence, offset, static_cast<uint16_t>(name.name.size())});
+    e.flags |= kHasLinks;
 }
 
 bool MftIndex::valid_parent(uint64_t parent, uint16_t parent_sequence, uint32_t child) const {
@@ -272,6 +273,9 @@ bool MftIndex::build_tree(uint32_t root_frn, std::u16string_view root_name, Node
                 } else {
                     info.size = e.size;
                     info.allocated = e.allocated;
+                    if (e.flags & kHasLinks) info.flags |= ES_NODE_HAS_LINKS;
+                    if ((e.attributes & kFileAttributeReparsePoint) && is_link_reparse_tag(e.reparse_tag))
+                        info.flags |= ES_NODE_REPARSE; // file symlink: never followed
                     if (e.attributes & kCloudAttributes) {
                         info.size = std::min(info.size, info.allocated); // online-only data takes no local space
                         info.flags |= ES_NODE_CLOUD;

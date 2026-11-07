@@ -85,6 +85,12 @@ public partial class NodeItemViewModel : ObservableObject
 
     public static string MoveToTrashHeader { get; } = $"Move to {FileActions.TrashName}…";
 
+    /// <summary>
+    /// False for placeholder rows (e.g. "… N more items"): they carry their owner's node, so no
+    /// file action may run on them.
+    /// </summary>
+    protected virtual bool CanAct => true;
+
     /// <summary>Re-reads values from the tree, e.g. after something below was deleted.</summary>
     public virtual void Refresh()
     {
@@ -93,24 +99,24 @@ public partial class NodeItemViewModel : ObservableObject
         OnPropertyChanged(nameof(Bytes));
     }
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanAct))]
     private void Open() => Actions.Open(Node);
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanAct))]
     private void Reveal() => Actions.Reveal(Node);
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanAct))]
     private Task CopyPath() => Actions.CopyPathAsync(Node);
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanAct))]
     private void ShowInTree() => Actions.ShowInTree(Node);
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanAct))]
     private void ShowInTreemap() => Actions.ShowInTreemap(Node);
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanAct))]
     private Task MoveToTrash() => Actions.MoveToTrashAsync(Node);
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanAct))]
     private void Properties() => Actions.ShowProperties(Node);
 }

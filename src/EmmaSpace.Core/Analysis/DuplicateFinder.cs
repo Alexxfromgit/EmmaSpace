@@ -36,7 +36,8 @@ public static class DuplicateFinder
         {
             ref readonly var n = ref tree.Nodes[node];
             if (n.Size < Math.Max(1, options.MinSize)) continue;
-            if ((n.Flags & (NodeFlags.Reparse | NodeFlags.Error | NodeFlags.HardLink)) != 0) continue;
+            // Links are never followed; cloud placeholders would be downloaded by opening them.
+            if ((n.Flags & (NodeFlags.Reparse | NodeFlags.Error | NodeFlags.HardLink | NodeFlags.Cloud)) != 0) continue;
             if (!bySize.TryGetValue(n.Size, out var list)) bySize[n.Size] = list = [];
             list.Add(node);
         }

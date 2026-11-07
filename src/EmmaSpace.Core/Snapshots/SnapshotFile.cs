@@ -16,12 +16,22 @@ public static class SnapshotFile
     private static ReadOnlySpan<byte> Magic => "EMSNAP01"u8;
     private const int FormatVersion = 1;
 
+    // Far above any real scan (a 5.8 M-entry system drive is well under 10 M nodes), but bounded,
+    // so a malformed header cannot ask for an arbitrary amount of memory.
+    internal const int MaxNodes = 64 * 1024 * 1024;
+    private const int MaxNameCharsPerNode = 512;
+
     public static async Task SaveAsync(FileTree tree, string path, CancellationToken ct = default)
     {
         var temp = path + ".tmp";
         await using (var file = File.Create(temp))
         {
-            await Task.Run(() => Save(tree, file), ct);
+            await Task.Run(() =>
+            {
+                // Native trees live in native memory; the lease keeps it alive if the tree is replaced meanwhile.
+                using var lease = tree.Lease();
+                Save(tree, file);
+            }, ct);
         }
         File.Move(temp, path, overwrite: true);
     }
@@ -72,15 +82,16 @@ public static class SnapshotFile
         var nodeCount = reader.ReadInt32();
         var namesLength = reader.ReadInt32();
         var nodeSize = reader.ReadInt32();
-        if (nodeSize != Marshal.SizeOf<EsNode>() || nodeCount <= 0 || namesLength < 0)
+        if (nodeSize != Marshal.SizeOf<EsNode>() || nodeCount <= 0 || nodeCount > MaxNodes || namesLength < 0 ||
+            namesLength > (long)nodeCount * MaxNameCharsPerNode)
             throw new InvalidDataException("Snapshot header is corrupt.");
 
-        var nodes = new EsNode[nodeCount];
-        var names = new char[namesLength];
+        EsNode[] nodes;
+        char[] names;
         using (var brotli = new BrotliStream(input, CompressionMode.Decompress, leaveOpen: true))
         {
-            brotli.ReadExactly(MemoryMarshal.AsBytes(nodes.AsSpan()));
-            brotli.ReadExactly(MemoryMarshal.AsBytes(names.AsSpan()));
+            nodes = ReadArray<EsNode>(brotli, nodeCount);
+            names = ReadArray<char>(brotli, namesLength);
         }
 
         Validate(nodes, namesLength);
@@ -88,7 +99,28 @@ public static class SnapshotFile
         return new FileTree(new ArrayNodeStorage(nodes, names), info);
     }
 
-    // Guards against corrupt files producing out-of-range indexes later on.
+    /// <summary>
+    /// Reads <paramref name="count"/> items, growing the array only as data actually arrives, so a
+    /// small truncated file fails early instead of first allocating what its header claims.
+    /// </summary>
+    private static T[] ReadArray<T>(Stream stream, int count) where T : unmanaged
+    {
+        const int chunk = 1 << 20;
+        var items = new T[Math.Min(count, chunk)];
+        var filled = 0;
+        while (filled < count)
+        {
+            if (filled == items.Length) Array.Resize(ref items, (int)Math.Min(count, (long)items.Length * 2));
+            var want = Math.Min(items.Length - filled, chunk);
+            stream.ReadExactly(MemoryMarshal.AsBytes(items.AsSpan(filled, want)));
+            filled += want;
+        }
+        return items;
+    }
+
+    // Guards against corrupt files producing out-of-range indexes, endless loops or shared
+    // children later on: every child chain must lead only to nodes that name this parent, and
+    // no node may appear in more than one chain (or twice in one).
     private static void Validate(EsNode[] nodes, int namesLength)
     {
         var count = (uint)nodes.Length;
@@ -100,6 +132,17 @@ public static class SnapshotFile
                           (n.NextSibling == EsNode.None || n.NextSibling < count);
             if (!linksOk || (long)n.NameOffset + n.NameLength > namesLength)
                 throw new InvalidDataException($"Snapshot node {i} is corrupt.");
+        }
+
+        var linked = new bool[nodes.Length];
+        for (var i = 0; i < nodes.Length; i++)
+        {
+            for (var c = nodes[i].FirstChild; c != EsNode.None; c = nodes[c].NextSibling)
+            {
+                if (linked[c] || nodes[c].Parent != (uint)i)
+                    throw new InvalidDataException($"Snapshot node {c} is linked inconsistently.");
+                linked[c] = true;
+            }
         }
     }
 }

@@ -13,6 +13,8 @@ public enum NodeFlags : ushort
     Deleted = 0x10,
     /// <summary>Cloud placeholder: size counts only the locally stored part.</summary>
     Cloud = 0x20,
+    /// <summary>File counted here that has other hard links; deleting this name may not free the space.</summary>
+    HasLinks = 0x40,
 }
 
 /// <summary>Mirror of <c>es_node</c> in emmascan.h. Must stay exactly 64 bytes.</summary>

@@ -38,9 +38,11 @@ public class FileTreeTests
     [Fact]
     public void Drive_root_paths_do_not_double_the_separator()
     {
-        using var tree = TreeFixtures.Sample(@"C:\");
+        // A drive root on Windows, "/" elsewhere (where a backslash is an ordinary name character).
+        var root = OperatingSystem.IsWindows() ? @"C:\" : "/";
+        using var tree = TreeFixtures.Sample(root);
         var zip = TreeFixtures.Find(tree, "big.zip");
-        Assert.Equal(@"C:\big.zip", tree.GetPath(zip));
+        Assert.Equal(root + "big.zip", tree.GetPath(zip));
     }
 
     [Fact]

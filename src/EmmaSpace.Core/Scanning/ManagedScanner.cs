@@ -55,7 +55,11 @@ public sealed class ManagedScanner : IScanner
         };
 
         var stack = new Stack<(int Node, string Path)>();
-        stack.Push((FileTree.Root, root));
+        // Same rule as for child folders: a virtualized cloud root is recorded but never listed.
+        if (((uint)rootInfo.Attributes & RecallOnDataAccess) != 0)
+            builder.AddFlags(FileTree.Root, NodeFlags.Cloud);
+        else
+            stack.Push((FileTree.Root, root));
         ulong files = 0, dirs = 0, bytes = 0;
         uint errors = 0;
         var lastReport = 0L;
@@ -89,7 +93,7 @@ public sealed class ManagedScanner : IScanner
                 if (e.IsDirectory)
                 {
                     var childPath = Path.Join(path, e.Name);
-                    var link = e.IsReparse && !options.FollowReparsePoints && IsLink(childPath);
+                    var link = e.IsReparse && !options.FollowReparsePoints && IsLink(new DirectoryInfo(childPath));
                     // Virtualized cloud folder: listing it would fetch it from the network; nothing is stored locally.
                     var cloud = (e.Attributes & RecallOnDataAccess) != 0;
                     var skip = link || cloud;
@@ -101,12 +105,13 @@ public sealed class ManagedScanner : IScanner
                 else
                 {
                     var length = e.Length;
-                    var flags = NodeFlags.None;
+                    // File symlinks keep the Reparse flag so nothing (e.g. duplicate hashing) follows them.
+                    var flags = e.IsReparse && IsLink(new FileInfo(Path.Join(path, e.Name))) ? NodeFlags.Reparse : NodeFlags.None;
                     if ((e.Attributes & CloudAttributes) != 0)
                     {
                         // Online-only data takes no local space; the managed API cannot see partial hydration.
                         length = 0;
-                        flags = NodeFlags.Cloud;
+                        flags |= NodeFlags.Cloud;
                     }
                     var allocated = (length + ClusterSize - 1) / ClusterSize * ClusterSize;
                     builder.AddChild(node, e.Name, flags, length, allocated, e.MTime, e.ATime, e.Attributes);
@@ -130,12 +135,12 @@ public sealed class ManagedScanner : IScanner
     }
 
     // Junctions and symlinks have a link target; other reparse points (e.g. OneDrive
-    // placeholders) do not and contain real files, so they are walked like the native engine does.
-    private static bool IsLink(string path)
+    // placeholders) do not and contain real data, so they are treated like the native engine does.
+    private static bool IsLink(FileSystemInfo info)
     {
         try
         {
-            return new DirectoryInfo(path).LinkTarget is not null;
+            return info.LinkTarget is not null;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

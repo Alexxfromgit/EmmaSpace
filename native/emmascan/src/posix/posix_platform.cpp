@@ -21,10 +21,12 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <condition_variable>
 #include <cstring>
 #include <fstream>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -141,15 +143,23 @@ class Walker {
 public:
     Walker(es_scan& scan, bool from_root) : scan_(scan), from_root_(from_root) {}
 
-    void run(uint32_t root_node, std::string root_path, DevIno root_id) {
+    // Returns ES_OK, or the first failure of any worker (e.g. ES_ERR_NO_MEMORY).
+    es_status run(uint32_t root_node, std::string root_path, DevIno root_id) {
         seen_.insert(root_id);
         stack_.push_back({root_node, std::move(root_path)});
         pending_ = 1;
         unsigned threads = scan_.thread_count;
         if (threads == 0) threads = std::clamp(std::thread::hardware_concurrency(), 2u, 16u);
         std::vector<std::thread> workers;
-        for (unsigned i = 0; i < threads; ++i) workers.emplace_back([this] { worker_loop(); });
+        try {
+            workers.reserve(threads);
+            for (unsigned i = 0; i < threads; ++i) workers.emplace_back([this] { worker_loop(); });
+        } catch (...) {
+            record_failure(ES_ERR_INTERNAL); // stop the workers that did start, then report
+        }
+        if (workers.empty()) return ES_ERR_INTERNAL;
         for (auto& t : workers) t.join();
+        return static_cast<es_status>(failure_.load());
     }
 
 private:
@@ -176,7 +186,17 @@ private:
                 item = std::move(stack_.back());
                 stack_.pop_back();
             }
-            if (!scan_.cancel.load(std::memory_order_relaxed)) list_directory(item, entries, names, raw_names);
+            // Exceptions must not escape a worker thread (std::terminate), and the item must
+            // always be retired so the other workers can finish.
+            if (!scan_.cancel.load(std::memory_order_relaxed)) {
+                try {
+                    list_directory(item, entries, names, raw_names);
+                } catch (const std::bad_alloc&) {
+                    record_failure(ES_ERR_NO_MEMORY);
+                } catch (...) {
+                    record_failure(ES_ERR_INTERNAL);
+                }
+            }
             std::lock_guard lock(queue_mutex_);
             if (--pending_ == 0) queue_cv_.notify_all();
         }
@@ -195,6 +215,7 @@ private:
             fail(item.node);
             return;
         }
+        std::unique_ptr<DIR, int (*)(DIR*)> dir_guard(dir, closedir); // also closes fd
 
         std::vector<bool> descend;
         uint64_t bytes = 0, files = 0, dirs = 0;
@@ -216,9 +237,14 @@ private:
                 }
                 ++dirs;
             } else {
-                if (S_ISREG(st.st_mode) && st.st_nlink > 1 && !first_visit({st.st_dev, st.st_ino})) {
-                    e.flags |= ES_NODE_HARDLINK;
-                    e.size = e.allocated = 0;
+                // Symlinks are flagged as reparse nodes by describe_entry().
+                if (S_ISREG(st.st_mode) && st.st_nlink > 1) {
+                    if (first_visit({st.st_dev, st.st_ino})) {
+                        e.flags |= ES_NODE_HAS_LINKS; // counted here; other names may exist
+                    } else {
+                        e.flags |= ES_NODE_HARDLINK;
+                        e.size = e.allocated = 0;
+                    }
                 }
                 bytes += e.size;
                 ++files;
@@ -229,7 +255,7 @@ private:
             descend.push_back(go_down);
             if (scan_.cancel.load(std::memory_order_relaxed)) break;
         }
-        closedir(dir); // also closes fd
+        dir_guard.reset();
 
         for (size_t i = 0; i < entries.size(); ++i) entries[i].name = names[i];
         uint32_t first;
@@ -249,6 +275,12 @@ private:
             ++pending_;
         }
         queue_cv_.notify_all();
+    }
+
+    void record_failure(es_status status) {
+        int expected = ES_OK;
+        failure_.compare_exchange_strong(expected, status);
+        scan_.cancel = true; // the other workers drain the queue without listing
     }
 
     bool first_visit(DevIno id) {
@@ -276,6 +308,7 @@ private:
     std::vector<WorkItem> stack_;
     size_t pending_ = 0;
     std::unordered_set<DevIno, DevInoHash> seen_; // directories and hard-linked files
+    std::atomic<int> failure_{ES_OK};
 };
 
 } // namespace
@@ -300,7 +333,8 @@ es_status scan(es_scan& scan) {
 
     scan.mode_used = ES_MODE_WALKER;
     scan.phase = ES_PHASE_ENUMERATING;
-    Walker(scan, root == "/").run(root_node, root, {st.st_dev, st.st_ino});
+    const es_status status = Walker(scan, root == "/").run(root_node, root, {st.st_dev, st.st_ino});
+    if (status != ES_OK) return status;
     return scan.cancel.load() ? ES_ERR_CANCELLED : ES_OK;
 }
 

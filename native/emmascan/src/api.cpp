@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstring>
+#include <memory>
 #include <new>
 
 namespace {
@@ -58,20 +59,21 @@ ES_API es_status ES_CALL es_scan_start(const es_scan_options* options, es_scan**
     auto root = to_view(options->root_path);
     if (root.empty()) return ES_ERR_INVALID_ARG;
 
-    auto* scan = new (std::nothrow) es_scan();
-    if (!scan) return ES_ERR_NO_MEMORY;
-    scan->root.assign(root);
-    scan->requested_mode = options->mode;
-    scan->thread_count = options->thread_count;
-    scan->flags = options->flags;
+    // Nothing may throw across the C ABI: set-up allocations are inside the handler too.
     try {
-        scan->thread = std::thread(run_scan, scan);
+        auto scan = std::make_unique<es_scan>();
+        scan->root.assign(root);
+        scan->requested_mode = options->mode;
+        scan->thread_count = options->thread_count;
+        scan->flags = options->flags;
+        scan->thread = std::thread(run_scan, scan.get());
+        *out_scan = scan.release();
+        return ES_OK;
+    } catch (const std::bad_alloc&) {
+        return ES_ERR_NO_MEMORY;
     } catch (...) {
-        delete scan;
         return ES_ERR_INTERNAL;
     }
-    *out_scan = scan;
-    return ES_OK;
 }
 
 ES_API es_status ES_CALL es_scan_get_progress(es_scan* scan, es_progress* out, es_char* path_buffer,
