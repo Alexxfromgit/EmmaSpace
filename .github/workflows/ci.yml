@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            native: win-x64
+          - name: macOS
+            os: macos-latest
+            native: osx
+          - name: Linux
+            os: ubuntu-latest
+            native: linux-x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - name: MSVC environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install Ninja
+        if: runner.os != 'Windows'
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then brew install ninja || true; fi
+          if [ "$RUNNER_OS" = "Linux" ]; then sudo apt-get update && sudo apt-get install -y ninja-build; fi
+
+      # Ninja + Release on every OS, so CI does not depend on a particular Visual Studio version.
+      # pwsh on Windows: in Git Bash, /usr/bin/link would shadow MSVC's link.exe.
+      - name: Configure native engine (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: >
+          cmake -S . -B artifacts/native-build/ci -G Ninja -DCMAKE_BUILD_TYPE=Release
+          "-DEMMASCAN_OUTPUT_DIR=${{ github.workspace }}/artifacts/native/${{ matrix.native }}"
+
+      - name: Configure native engine (macOS / Linux)
+        if: runner.os != 'Windows'
+        run: |
+          extra=()
+          if [ "$RUNNER_OS" = "macOS" ]; then extra=("-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64" "-DCMAKE_OSX_DEPLOYMENT_TARGET=12.0"); fi
+          cmake -S . -B artifacts/native-build/ci -G Ninja -DCMAKE_BUILD_TYPE=Release \
+                "-DEMMASCAN_OUTPUT_DIR=$GITHUB_WORKSPACE/artifacts/native/${{ matrix.native }}" "${extra[@]}"
+
+      - name: Build native engine
+        run: cmake --build artifacts/native-build/ci
+
+      - name: Native tests
+        run: ctest --test-dir artifacts/native-build/ci --output-on-failure
+
+      - name: Build .NET
+        run: dotnet build EmmaSpace.slnx -c Release -p:EmmaSkipNative=true
+
+      - name: .NET tests
+        run: dotnet test --project tests/EmmaSpace.Core.Tests -c Release -p:EmmaSkipNative=true --no-build
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          dotnet tool restore
+          dotnet publish src/EmmaSpace.App -c Release -r win-x64 --self-contained -p:EmmaSkipNative=true `
+            -p:DebugType=None -p:CopyDebugSymbolFilesFromPackages=false -o artifacts/pack-input/win-x64
+          dotnet vpk pack --packId EmmaSpace --packVersion 0.1.0-ci.${{ github.run_number }} --packDir artifacts/pack-input/win-x64 `
+            --mainExe EmmaSpace.exe --packTitle "Emma Space" --icon src/EmmaSpace.App/Assets/emmaspace.ico `
+            --outputDir artifacts/releases/win-x64
+
+      - name: Upload installer
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: EmmaSpace-win-x64
+          path: artifacts/releases/win-x64
+          retention-days: 14

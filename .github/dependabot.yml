@@ -1,0 +1,25 @@
+version: 2
+updates:
+  # NuGet (central package management in Directory.Packages.props) and the vpk local tool
+  - package-ecosystem: nuget
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      avalonia:
+        patterns: ["Avalonia*"]
+      testing:
+        patterns: ["xunit*", "Microsoft.NET.Test.Sdk"]
+      velopack:
+        patterns: ["Velopack", "vpk"]
+      dotnet:
+        patterns: ["Microsoft.Extensions.*", "System.*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]

@@ -1,0 +1,61 @@
+name: Release
+
+# Push a tag like v0.2.0 to build the Windows installer and publish a GitHub release.
+# Velopack downloads the previous release first, so the new one also gets a delta update package.
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write # create the release and upload its assets
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Version from tag
+        id: version
+        shell: pwsh
+        run: '"value=$("${{ github.ref_name }}".TrimStart("v"))" >> $env:GITHUB_OUTPUT'
+
+      - name: Native engine
+        shell: pwsh
+        run: |
+          cmake -S . -B artifacts/native-build/release -G Ninja -DCMAKE_BUILD_TYPE=Release -DEMMASCAN_BUILD_TESTS=ON `
+            "-DEMMASCAN_OUTPUT_DIR=${{ github.workspace }}/artifacts/native/win-x64"
+          cmake --build artifacts/native-build/release
+          ctest --test-dir artifacts/native-build/release --output-on-failure
+
+      - name: .NET tests
+        run: dotnet test --project tests/EmmaSpace.Core.Tests -c Release -p:EmmaSkipNative=true
+
+      - name: Publish
+        run: >
+          dotnet publish src/EmmaSpace.App -c Release -r win-x64 --self-contained -p:EmmaSkipNative=true
+          -p:Version=${{ steps.version.outputs.value }} -p:DebugType=None -p:CopyDebugSymbolFilesFromPackages=false
+          -o artifacts/pack-input/win-x64
+
+      - name: Package and publish release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $v = "${{ steps.version.outputs.value }}"
+          $repo = "${{ github.server_url }}/${{ github.repository }}"
+          $out = "artifacts/releases/win-x64"
+          dotnet tool restore
+          # Previous release (if any) enables delta packages; a first release has none.
+          dotnet vpk download github --repoUrl $repo --token $env:GH_TOKEN -o $out
+          dotnet vpk pack --packId EmmaSpace --packVersion $v --packDir artifacts/pack-input/win-x64 --mainExe EmmaSpace.exe `
+            --packTitle "Emma Space" --packAuthors "Alexander Rubtsov" --icon src/EmmaSpace.App/Assets/emmaspace.ico -o $out
+          dotnet vpk upload github --repoUrl $repo --token $env:GH_TOKEN --publish --releaseName "Emma Space $v" `
+            --tag "${{ github.ref_name }}" -o $out
