@@ -14,6 +14,9 @@ namespace EmmaSpace.Core.Snapshots;
 public static class SnapshotFile
 {
     public const string Extension = ".emmasnap";
+
+    /// <summary>How every snapshot file starts, whatever its format version (used to recognize the file type).</summary>
+    public const string MagicPrefix = "EMSNAP";
     private static ReadOnlySpan<byte> Magic => "EMSNAP01"u8;
     private const int FormatVersion = 1;
 
@@ -73,6 +76,71 @@ public static class SnapshotFile
         brotli.Write(MemoryMarshal.AsBytes(names));
     }
 
+    /// <summary>
+    /// Whether the file starts the way every snapshot does (<see cref="MagicPrefix"/>, any format version),
+    /// as the Linux MIME type recognizes a snapshot whose name lacks the extension. Reads 6 bytes; false
+    /// for anything unreadable. Pipes and devices report no length and are never opened, since opening
+    /// a pipe would wait for a writer.
+    /// </summary>
+    public static bool StartsLikeSnapshot(string path)
+    {
+        try
+        {
+            if (new FileInfo(path).Length < MagicPrefix.Length) return false;
+            using var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, bufferSize: 1);
+            Span<byte> head = stackalloc byte[MagicPrefix.Length];
+            return input.ReadAtLeast(head, head.Length, throwOnEndOfStream: false) == head.Length
+                && head.SequenceEqual(Magic[..MagicPrefix.Length]);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// What a snapshot file is of and when it was taken, read from its header only (cheap, for asking
+    /// the user before loading). Null if it isn't a readable snapshot.
+    /// </summary>
+    public static (string RootPath, DateTimeOffset ScannedAt)? TryReadSummary(string path)
+    {
+        try
+        {
+            using var input = File.OpenRead(path);
+            using var reader = new BinaryReader(input, Encoding.UTF8);
+            if (!reader.ReadBytes(Magic.Length).AsSpan().SequenceEqual(Magic) || reader.ReadInt32() != FormatVersion) return null;
+            var rootPath = ReadRootPath(reader);
+            var scannedAtMs = reader.ReadInt64();
+            return UnixTime.IsValid(scannedAtMs) ? (rootPath, DateTimeOffset.FromUnixTimeMilliseconds(scannedAtMs).ToLocalTime()) : null;
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException)
+        {
+            return null; // IOException includes EndOfStreamException (a truncated file)
+        }
+    }
+
+    /// <summary>
+    /// The root path as BinaryWriter.Write(string) stored it (a 7-bit encoded byte count, then UTF-8),
+    /// with the count checked first, so a damaged or hostile header can't ask for gigabytes.
+    /// </summary>
+    private static string ReadRootPath(BinaryReader reader)
+    {
+        int bytes;
+        try
+        {
+            bytes = reader.Read7BitEncodedInt();
+        }
+        catch (FormatException)
+        {
+            throw new InvalidDataException("Snapshot header is corrupt.");
+        }
+        // UTF-8 needs at most 3 bytes per UTF-16 unit.
+        if (bytes < 0 || bytes > MaxRootNameChars * 3) throw new InvalidDataException("Snapshot header is corrupt.");
+        var utf8 = reader.ReadBytes(bytes);
+        if (utf8.Length != bytes) throw new EndOfStreamException();
+        return Encoding.UTF8.GetString(utf8);
+    }
+
     public static FileTree Load(Stream input)
     {
         using var reader = new BinaryReader(input, Encoding.UTF8, leaveOpen: true);
@@ -82,7 +150,7 @@ public static class SnapshotFile
         var version = reader.ReadInt32();
         if (version != FormatVersion) throw new InvalidDataException($"Unsupported snapshot version {version}.");
 
-        var rootPath = reader.ReadString();
+        var rootPath = ReadRootPath(reader);
         var scannedAtMs = reader.ReadInt64();
         var elapsedMs = reader.ReadInt64();
         if (!UnixTime.IsValid(scannedAtMs) || elapsedMs < 0 || elapsedMs > (long)TimeSpan.MaxValue.TotalMilliseconds)

@@ -12,7 +12,11 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <AvaloniaResource Include="Assets\**" Exclude="Assets\*.icns" /> <!-- the .icns is only for the macOS bundle -->
+    <!-- The .icns files are only for the macOS bundle; emmasnap.ico is a file next to the exe (below). -->
+    <AvaloniaResource Include="Assets\**" Exclude="Assets\*.icns;Assets\emmasnap.ico" />
+    <!-- Icon of .emmasnap files on Windows: the file type registration points the shell at this file. -->
+    <None Include="Assets\emmasnap.ico" Link="emmasnap.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest"
+          ExcludeFromSingleFile="true" />
   </ItemGroup>
 
   <ItemGroup>

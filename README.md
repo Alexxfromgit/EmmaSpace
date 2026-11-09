@@ -27,7 +27,14 @@ Get the latest version from [Releases](https://github.com/Alexxfromgit/EmmaSpace
 | Windows 11 on ARM | `EmmaSpace-win-arm64-Setup.exe` | `EmmaSpace-win-arm64-Portable.zip` |
 | macOS 12+ (Apple silicon) | `EmmaSpace-osx-arm64-Setup.pkg` | `EmmaSpace-osx-arm64-Portable.zip` |
 | macOS 12+ (Intel) | `EmmaSpace-osx-x64-Setup.pkg` | `EmmaSpace-osx-x64-Portable.zip` |
-| Linux (x64) | `.AppImage` (runs as is, no install) | |
+| Linux (x64) | `.AppImage` (runs as is, no install; see below) | |
+
+On Linux the AppImage adds itself to your applications menu when it starts, so `.emmasnap`
+snapshots open in it with a double-click. It writes `com.alexxfromgit.emmaspace.desktop` to
+`~/.local/share/applications`, `com.alexxfromgit.emmaspace.xml` to `~/.local/share/mime/packages`
+and two icons under `~/.local/share/icons/hicolor/256x256`, and once the desktop has taken them in,
+notes that in `~/.local/share/EmmaSpace/desktop-registration` (until then it tries again at each
+start). Delete those files to undo it (they come back the next time the AppImage runs).
 
 Installed copies update themselves: Emma Space checks for a new release shortly after it starts
 and offers to restart into it (you can turn that off in the version menu in the status bar).
@@ -48,7 +55,7 @@ right-click → Open the first time.
 | Largest files | Top 1,000 files |
 | Duplicates | Same size → hash of head and tail → full hash (xxHash128); only candidates are read |
 | Clean-up | Files not modified/opened for 6 months–5 years; empty folder trees |
-| Snapshots | Save a scan (`.emmasnap`, Brotli) and compare it later: what grew, shrank, appeared or vanished |
+| Snapshots | Save a scan (`.emmasnap`, Brotli) and compare it later: what grew, shrank, appeared or vanished. Snapshot files have their own icon and open in Emma Space with a double-click (registered by the Windows installer, the macOS app bundle, and on Linux when the AppImage first runs); if Emma Space is already open, it asks before replacing what is on screen |
 | Export | Self-contained HTML report; CSV of folders or of every file |
 | Actions | Open, show in Explorer/Finder, copy path, Properties (Windows), move to Recycle Bin / Trash (asks first; on Windows the shell warns before anything would be deleted permanently; on macOS Finder's "Put Back" works) |
 

@@ -24,6 +24,10 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
     private readonly SettingsService _settings;
     private readonly ElevationService _elevation;
     private CancellationTokenSource? _scanCts;
+    private int _loadGeneration; // bumped by every scan and snapshot load; the newest one wins
+    private readonly SemaphoreSlim _snapshotOffers = new(1, 1);
+    private Task _snapshotLoad = Task.CompletedTask; // the latest snapshot load, which the next offer waits for
+    private bool _snapshotHandedOver; // a snapshot came from outside already, so later ones are asked about
     private bool _syncingSelection;
 
     public MainWindowViewModel(IScanner scanner, IFileActions fileActions, IDialogService dialogs, SettingsService settings,
@@ -283,6 +287,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
     {
         if (IsScanning) return;
         IsScanning = true;
+        _loadGeneration++; // a snapshot still loading must not replace this scan's result
         _scanCts = new CancellationTokenSource();
         ProgressFiles = ProgressBytes = ProgressPath = ProgressElapsed = "";
         var stopwatch = Stopwatch.StartNew();
@@ -536,10 +541,84 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
     {
         if (IsScanning) return;
         var path = await _dialogs.OpenFileAsync("Open snapshot", "Emma Space snapshot", SnapshotFile.Extension);
-        if (path is null) return;
+        if (path is not null) await OpenSnapshotFileAsync(path);
+    }
+
+    /// <summary>
+    /// A snapshot handed over from outside: double-clicked while Emma Space was already open, so it asks
+    /// before opening it, since it replaces what is on screen. With <paramref name="ask"/> false (the file
+    /// that launched the app) it opens directly, unless something is on screen by then or another file
+    /// was handed over first. One at a time, in the order they arrive: each waits for the question and
+    /// the load before it. Anything that isn't a snapshot file is ignored; that is checked off the UI
+    /// thread, since the file may sit on a sleeping disk or a slow share.
+    /// </summary>
+    public async Task OfferSnapshotAsync(string path, bool ask = true)
+    {
+        await _snapshotOffers.WaitAsync();
         try
         {
-            SetTree(await SnapshotFile.LoadAsync(path));
+            try
+            {
+                await _snapshotLoad; // let the snapshot before this one reach the screen first
+            }
+            catch (Exception ex)
+            {
+                Trace.WriteLine($"[snapshot] previous load failed: {ex.Message}"); // its own caller reports it
+            }
+            if (!await Task.Run(() => SnapshotFileType.IsSnapshot(path))) return;
+            ask = ask || _snapshotHandedOver || Tree is not null;
+            _snapshotHandedOver = true;
+            if (!ask)
+            {
+                await OpenSnapshotFileAsync(path);
+                return;
+            }
+
+            var name = Path.GetFileName(path);
+            if (IsScanning)
+            {
+                await _dialogs.ShowErrorAsync("Snapshot not opened",
+                    $"Emma Space is scanning. Open \"{name}\" again once the scan has finished or been cancelled.");
+                return;
+            }
+            // Off the UI thread: the file may sit on a sleeping disk or a slow share.
+            var about = await Task.Run(() => SnapshotFile.TryReadSummary(path)) is var (root, taken)
+                ? $"\n\nIt is a snapshot of {root}, taken {taken.ToString("g", CultureInfo.CurrentCulture)}."
+                : "";
+            var replaces = Tree is null ? "" : $"\n\nIt replaces the results on screen ({Tree.RootPath}).";
+            if (await _dialogs.ConfirmAsync("Open snapshot?", $"Open \"{name}\"?{about}{replaces}", "Open snapshot"))
+                await OpenSnapshotFileAsync(path);
+        }
+        finally
+        {
+            _snapshotOffers.Release();
+        }
+    }
+
+    /// <summary>
+    /// Shows a saved snapshot, e.g. one the user double-clicked in Explorer, Finder or a Linux file
+    /// manager. Not while a scan runs, and a load that a newer scan or snapshot overtook is dropped.
+    /// </summary>
+    public Task OpenSnapshotFileAsync(string path) => _snapshotLoad = LoadSnapshotFileAsync(path);
+
+    private async Task LoadSnapshotFileAsync(string path)
+    {
+        if (IsScanning)
+        {
+            await _dialogs.ShowErrorAsync("Snapshot not opened",
+                $"Emma Space is scanning. Open \"{Path.GetFileName(path)}\" again once the scan has finished or been cancelled.");
+            return;
+        }
+        var load = ++_loadGeneration;
+        try
+        {
+            var tree = await SnapshotFile.LoadAsync(path);
+            if (load != _loadGeneration || IsScanning)
+            {
+                tree.Dispose();
+                return;
+            }
+            SetTree(tree);
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException)
         {

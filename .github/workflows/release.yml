@@ -220,7 +220,14 @@ jobs:
           $notes = Join-Path $env:RUNNER_TEMP 'release-notes.md'
           Set-Content -Path $notes -Value $env:NOTES -Encoding utf8NoBOM
 
-          $pack = @('vpk', 'pack', '--packId', 'EmmaSpace', '--packVersion', $env:VERSION, '--packDir', $env:PACK_INPUT,
+          # On macOS, pack a ready .app: build/macos/Info.plist declares .emmasnap documents and their icon.
+          $packDir = $env:PACK_INPUT
+          if ($env:RUNNER_OS -eq 'macOS') {
+            $packDir = pwsh build/bundle-macos.ps1 -Version $env:VERSION -PackDir $env:PACK_INPUT -Runtime $env:RID `
+                         -OutDir (Join-Path $env:RUNNER_TEMP 'bundle') | Select-Object -Last 1
+          }
+
+          $pack = @('vpk', 'pack', '--packId', 'EmmaSpace', '--packVersion', $env:VERSION, '--packDir', $packDir,
                     '--packTitle', 'Emma Space', '--packAuthors', 'Alexander Rubtsov', '--runtime', $env:RID,
                     '--channel', $env:RID, '--releaseNotes', $notes, '--outputDir', $env:PACK_OUTPUT)
           switch ($env:RUNNER_OS) {
@@ -234,8 +241,8 @@ jobs:
               } else { Write-Host '::warning::Windows code signing is not configured; the installer is unsigned.' }
             }
             'macOS' {
-              $pack += '--mainExe', 'EmmaSpace', '--icon', 'src/EmmaSpace.App/Assets/emmaspace.icns',
-                       '--bundleId', 'com.alexxfromgit.emmaspace'
+              # The bundle id (com.alexxfromgit.emmaspace) is in build/macos/Info.plist.
+              $pack += '--mainExe', 'EmmaSpace', '--icon', 'src/EmmaSpace.App/Assets/emmaspace.icns'
               if ($env:APPLE_KEYCHAIN) {
                 $pack += '--signAppIdentity', $env:APPLE_APP_IDENTITY, '--signInstallIdentity', $env:APPLE_INSTALL_IDENTITY,
                          '--notaryProfile', 'emmaspace', '--keychain', $env:APPLE_KEYCHAIN
