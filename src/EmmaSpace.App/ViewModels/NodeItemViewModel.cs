@@ -16,7 +16,7 @@ public interface INodeActions
 {
     bool CanShowProperties { get; }
     void Open(int node);
-    void Reveal(int node);
+    Task RevealAsync(int node);
     Task CopyPathAsync(int node);
     void ShowInTree(int node);
     void ShowInTreemap(int node);
@@ -103,7 +103,7 @@ public partial class NodeItemViewModel : ObservableObject
     private void Open() => Actions.Open(Node);
 
     [RelayCommand(CanExecute = nameof(CanAct))]
-    private void Reveal() => Actions.Reveal(Node);
+    private Task Reveal() => Actions.RevealAsync(Node);
 
     [RelayCommand(CanExecute = nameof(CanAct))]
     private Task CopyPath() => Actions.CopyPathAsync(Node);

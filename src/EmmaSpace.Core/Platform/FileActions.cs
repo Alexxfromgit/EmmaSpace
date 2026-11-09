@@ -9,7 +9,8 @@ public interface IFileActions
     /// <summary>Moves a file or folder to the Recycle Bin / Trash. Throws on failure.</summary>
     Task MoveToTrashAsync(string path);
 
-    void Reveal(string path);
+    /// <summary>Shows a file or folder selected in its parent folder. Faults with IOException or Win32Exception.</summary>
+    Task RevealAsync(string path);
 
     void Open(string path);
 
@@ -63,40 +64,59 @@ public sealed partial class FileActions : IFileActions
 
     /// <summary>
     /// Opens the folder that contains <paramref name="path"/> (a file or a folder) in the system file
-    /// manager, with the item selected.
+    /// manager, with the item selected. Runs in the background, since a network folder can take a
+    /// while to answer; a missing item or a failed launch faults the task (IOException or Win32Exception).
     /// </summary>
-    public void Reveal(string path)
+    public Task RevealAsync(string path)
     {
-        if (!File.Exists(path) && !Directory.Exists(path)) throw new IOException($"'{path}' no longer exists.");
-        if (OperatingSystem.IsWindows())
-            RevealOnWindows(path);
-        else if (OperatingSystem.IsMacOS())
-            Process.Start("open", ["-R", path]);
-        else
-            RevealOnLinux(path);
+        if (OperatingSystem.IsWindows()) return RevealOnWindowsAsync(path);
+        return Task.Run(() =>
+        {
+            if (OperatingSystem.IsMacOS())
+                Run("open", "-R", path); // open reports a missing item itself
+            else
+                RevealOnLinux(path);
+        });
     }
+
+    private static IOException NotFound(string path) => new($"'{path}' could not be found. It may have been moved or deleted.");
 
     // The shell call explorer.exe /select makes internally, without its command line: a path with a
     // space must be quoted after the comma (/select,"C:\a b\c.txt"), and .NET's argument quoting wraps
     // the whole argument instead, so Explorer ignored it and opened Documents. The call is made on its
-    // own STA thread because the shell needs COM there, and a slow (e.g. network) folder must not
-    // block the UI.
+    // own STA thread because the shell needs COM there.
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
-    private static void RevealOnWindows(string path)
+    private static Task RevealOnWindowsAsync(string path)
     {
+        var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var thread = new Thread(() =>
         {
             var initialized = CoInitializeEx(nint.Zero, CoinitApartmentThreaded) >= 0;
             try
             {
                 var item = ILCreateFromPathW(path);
-                var hr = item == nint.Zero ? -1 : SHOpenFolderAndSelectItems(item, 0, nint.Zero, 0);
-                if (item != nint.Zero) ILFree(item);
-                if (hr < 0) StartExplorerSelect(path);
+                if (item == nint.Zero)
+                {
+                    // The shell could not resolve the path: gone, or a location it can't parse.
+                    if (!File.Exists(path) && !Directory.Exists(path)) throw NotFound(path);
+                    StartExplorerSelect(path);
+                }
+                else
+                {
+                    try
+                    {
+                        if (SHOpenFolderAndSelectItems(item, 0, nint.Zero, 0) < 0) StartExplorerSelect(path);
+                    }
+                    finally
+                    {
+                        ILFree(item);
+                    }
+                }
+                done.SetResult();
             }
-            catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+            catch (Exception ex)
             {
-                // Nothing left to try; the app has already returned from the menu click.
+                done.SetException(ex); // never let it escape: an exception on this thread would end the app
             }
             finally
             {
@@ -105,6 +125,7 @@ public sealed partial class FileActions : IFileActions
         }) { IsBackground = true, Name = "Show in folder" };
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
+        return done.Task;
     }
 
     /// <summary>The fallback: explorer.exe /select,"path", quoted the way Explorer parses it.</summary>
@@ -115,9 +136,10 @@ public sealed partial class FileActions : IFileActions
 
     // File managers that implement org.freedesktop.FileManager1 (Nautilus, Dolphin, Nemo, Caja, Thunar
     // and others) open the parent folder with the item selected. Without one, open the parent folder.
-    // In the background, because D-Bus may first have to start the file manager.
-    private static void RevealOnLinux(string path) => Task.Run(() =>
+    // --print-reply makes dbus-send wait, so a missing file manager shows up as a failure.
+    private static void RevealOnLinux(string path)
     {
+        if (!File.Exists(path) && !Directory.Exists(path)) throw NotFound(path);
         try
         {
             Run("dbus-send", "--session", "--print-reply", "--dest=org.freedesktop.FileManager1", "--type=method_call",
@@ -125,16 +147,9 @@ public sealed partial class FileActions : IFileActions
         }
         catch (IOException)
         {
-            try
-            {
-                Process.Start("xdg-open", [Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(path)) ?? path])?.Dispose();
-            }
-            catch (System.ComponentModel.Win32Exception)
-            {
-                // No xdg-open either; nothing left to try.
-            }
+            Process.Start("xdg-open", [Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(path)) ?? path])?.Dispose();
         }
-    });
+    }
 
     /// <summary>
     /// A file:// URI for an absolute POSIX path, every segment percent-encoded. That covers '#', '%'
@@ -160,8 +175,8 @@ public sealed partial class FileActions : IFileActions
         if (OperatingSystem.IsWindows()) SHObjectProperties(nint.Zero, ShopFilePath, path, null);
     }
 
-    // Failures (including a missing tool such as gio) surface as IOException, which the app's
-    // trash handler turns into an error dialog.
+    // Failures (including a missing tool such as gio) surface as IOException, which the app turns
+    // into an error dialog. The tool's own output is discarded rather than mixed into the app's.
     internal static void Run(string fileName, params string[] args)
     {
         Process? started;
@@ -169,6 +184,7 @@ public sealed partial class FileActions : IFileActions
         {
             started = Process.Start(new ProcessStartInfo(fileName, args)
             {
+                RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true,
@@ -179,8 +195,10 @@ public sealed partial class FileActions : IFileActions
             throw new IOException($"Could not start {fileName}: {ex.Message}", ex);
         }
         using var process = started ?? throw new IOException($"Could not start {fileName}.");
+        var output = process.StandardOutput.ReadToEndAsync(); // drained alongside stderr, so neither pipe fills up
         var error = process.StandardError.ReadToEnd();
         process.WaitForExit();
+        output.Wait();
         if (process.ExitCode != 0) throw new IOException(string.IsNullOrWhiteSpace(error) ? $"{fileName} failed." : error.Trim());
     }
 

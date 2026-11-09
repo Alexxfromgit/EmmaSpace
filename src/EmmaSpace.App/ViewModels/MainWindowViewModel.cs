@@ -177,8 +177,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
     private Task ScanAsync() => string.IsNullOrWhiteSpace(PathText) ? BrowseAsync() : ScanPathAsync(TypedPath(PathText));
 
     // Stray spaces around typed text are dropped, unless the folder's name really has them
-    // (legal on macOS and Linux).
-    private static string TypedPath(string text) => Directory.Exists(text) ? text : text.Trim();
+    // (legal on macOS and Linux). ScanPaths.AreSame applies the same rule to the button label.
+    private static string TypedPath(string text) => ScanPaths.FromTyped(text);
 
     private bool CanRescan() => !IsScanning && Tree is not null;
 
@@ -274,8 +274,10 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
         HoveredNode = FileTree.None;
         if (tree is not null) tree.NodeRemoved += OnNodeRemoved;
 
-        // The path box names what is on screen, so the scan button offers to rescan the snapshot's folder.
-        if (tree?.Info.Source == ScanSource.Snapshot) PathText = tree.Info.RootPath;
+        // The path box names what is on screen, so the scan button offers to rescan the snapshot's folder,
+        // unless the snapshot was taken on another system (e.g. a Windows path opened on Linux).
+        if (tree?.Info.Source == ScanSource.Snapshot && Path.IsPathFullyQualified(tree.Info.RootPath))
+            PathText = tree.Info.RootPath;
 
         FolderTree.Load(tree);
         foreach (var vm in AnalysisViewModels) vm.Load(tree);
@@ -384,7 +386,18 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
 
     public void Open(int node) => Try(() => _fileActions.Open(Tree!.GetPath(node)));
 
-    public void Reveal(int node) => Try(() => _fileActions.Reveal(Tree!.GetPath(node)));
+    public async Task RevealAsync(int node)
+    {
+        if (Tree is null) return;
+        try
+        {
+            await _fileActions.RevealAsync(Tree.GetPath(node));
+        }
+        catch (Exception ex) when (ex is IOException or System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            await _dialogs.ShowErrorAsync("Could not show in folder", ex.Message);
+        }
+    }
 
     public void ShowProperties(int node) => Try(() => _fileActions.ShowProperties(Tree!.GetPath(node)));
 

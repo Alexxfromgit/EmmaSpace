@@ -155,7 +155,7 @@
             </ItemsControl.ItemsPanel>
             <ItemsControl.ItemTemplate>
               <DataTemplate x:DataType="vm:DriveViewModel">
-                <Button Classes="card" Width="300" Margin="0,0,14,14"
+                <Button Classes="card" Width="300" Margin="0,0,14,14" AutomationProperties.Name="{Binding Title}"
                         Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).ScanDriveCommand}"
                         CommandParameter="{Binding}">
                   <Border Classes="card" Padding="18,16">

@@ -19,11 +19,11 @@ public class FileActionsTests
     }
 
     [Fact]
-    public void Showing_a_deleted_item_in_its_folder_says_it_is_gone()
+    public async Task Showing_a_deleted_item_in_its_folder_reports_an_error()
     {
+        // Windows and Linux say so themselves; on macOS the message is Finder's (open -R).
         var missing = Path.Combine(Path.GetTempPath(), "emmaspace-missing-" + Guid.NewGuid().ToString("N"));
-        var ex = Assert.Throws<IOException>(() => new FileActions().Reveal(missing));
-        Assert.Contains("no longer exists", ex.Message);
+        await Assert.ThrowsAnyAsync<IOException>(() => new FileActions().RevealAsync(missing));
     }
 
     [Theory]
