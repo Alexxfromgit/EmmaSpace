@@ -32,8 +32,9 @@ Get the latest version from [Releases](https://github.com/Alexxfromgit/EmmaSpace
 On Linux the AppImage adds itself to your applications menu when it starts, so `.emmasnap`
 snapshots open in it with a double-click. It writes `com.alexxfromgit.emmaspace.desktop` to
 `~/.local/share/applications`, `com.alexxfromgit.emmaspace.xml` to `~/.local/share/mime/packages`
-and two icons under `~/.local/share/icons/hicolor/256x256`. Delete those files to undo it (they
-come back the next time the AppImage runs).
+and two icons under `~/.local/share/icons/hicolor/256x256`, and once the desktop has taken them in,
+notes that in `~/.local/share/EmmaSpace/desktop-registration` (until then it tries again at each
+start). Delete those files to undo it (they come back the next time the AppImage runs).
 
 Installed copies update themselves: Emma Space checks for a new release shortly after it starts
 and offers to restart into it (you can turn that off in the version menu in the status bar).

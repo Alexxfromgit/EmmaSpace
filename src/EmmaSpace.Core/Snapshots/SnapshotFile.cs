@@ -77,6 +77,28 @@ public static class SnapshotFile
     }
 
     /// <summary>
+    /// Whether the file starts the way every snapshot does (<see cref="MagicPrefix"/>, any format version),
+    /// as the Linux MIME type recognizes a snapshot whose name lacks the extension. Reads 6 bytes; false
+    /// for anything unreadable. Pipes and devices report no length and are never opened, since opening
+    /// a pipe would wait for a writer.
+    /// </summary>
+    public static bool StartsLikeSnapshot(string path)
+    {
+        try
+        {
+            if (new FileInfo(path).Length < MagicPrefix.Length) return false;
+            using var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, bufferSize: 1);
+            Span<byte> head = stackalloc byte[MagicPrefix.Length];
+            return input.ReadAtLeast(head, head.Length, throwOnEndOfStream: false) == head.Length
+                && head.SequenceEqual(Magic[..MagicPrefix.Length]);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
     /// What a snapshot file is of and when it was taken, read from its header only (cheap, for asking
     /// the user before loading). Null if it isn't a readable snapshot.
     /// </summary>

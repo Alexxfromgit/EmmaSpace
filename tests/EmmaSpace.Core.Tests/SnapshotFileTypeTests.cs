@@ -32,6 +32,87 @@ public partial class SnapshotFileTypeTests
     }
 
     [Fact]
+    public void A_renamed_snapshot_is_recognized_by_its_first_bytes()
+    {
+        // The Linux MIME type matches snapshots by content too, so the desktop may hand over one without the extension.
+        var dir = Directory.CreateTempSubdirectory("emmaspace-snapfile-").FullName;
+        try
+        {
+            var renamed = Path.Combine(dir, "weekly");
+            using (var tree = TreeFixtures.Sample())
+            using (var stream = File.Create(renamed))
+                SnapshotFile.Save(tree, stream);
+            var text = Path.Combine(dir, "notes");
+            File.WriteAllText(text, "EMSNA"); // shorter than the prefix
+            var other = Path.Combine(dir, "other.bin");
+            File.WriteAllText(other, "not a snapshot at all");
+
+            Assert.True(SnapshotFileType.IsSnapshot(renamed));
+            Assert.False(SnapshotFileType.IsSnapshot(text));
+            Assert.False(SnapshotFileType.IsSnapshot(other));
+            Assert.False(SnapshotFileType.IsSnapshot(dir));
+            Assert.Equal(renamed, SnapshotFileType.FindInArguments([other, renamed]));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Linux_registration_is_retried_until_the_desktop_has_taken_it_in()
+    {
+        var home = Directory.CreateTempSubdirectory("emmaspace-xdg-").FullName;
+        try
+        {
+            byte[] appIcon = [1, 2, 3], fileIcon = [4, 5, 6];
+            var calls = new List<string>();
+            var mimeDatabase = SnapshotFileType.ToolStatus.Failed;
+            (SnapshotFileType.ToolStatus, string) Run(Action<string>? _, string tool, string[] args)
+            {
+                calls.Add($"{tool} {string.Join(' ', args)}");
+                return tool switch
+                {
+                    "update-mime-database" => (mimeDatabase, ""),
+                    "update-desktop-database" => (SnapshotFileType.ToolStatus.Missing, ""), // not installed: nothing to retry
+                    _ when args[0] == "query" => (SnapshotFileType.ToolStatus.Ok, "\n"), // no default app chosen yet
+                    _ => (SnapshotFileType.ToolStatus.Ok, ""),
+                };
+            }
+            bool Install() => SnapshotFileType.InstallOnLinux("/opt/EmmaSpace.AppImage", appIcon, fileIcon, home, null, Run);
+            var stamp = SnapshotFileType.RegistrationStampPath(home);
+
+            // The MIME database refresh fails: the files are written, but nothing records the registration as done.
+            Assert.True(Install());
+            Assert.Contains(calls, c => c.StartsWith("xdg-mime default com.alexxfromgit.emmaspace.desktop", StringComparison.Ordinal));
+            Assert.False(File.Exists(stamp));
+
+            // The next start refreshes again although no file changed, and this time it works.
+            calls.Clear();
+            mimeDatabase = SnapshotFileType.ToolStatus.Ok;
+            Assert.True(Install());
+            Assert.Contains(calls, c => c.StartsWith("update-mime-database", StringComparison.Ordinal));
+            Assert.True(File.Exists(stamp));
+
+            // Then nothing is left to do.
+            calls.Clear();
+            Assert.False(Install());
+            Assert.Empty(calls);
+
+            // A moved AppImage registers again, and an app the user chose for snapshots stays their default.
+            calls.Clear();
+            Assert.True(SnapshotFileType.InstallOnLinux("/home/emma/EmmaSpace.AppImage", appIcon, fileIcon, home, null,
+                (log, tool, args) => args is ["query", ..] ? (SnapshotFileType.ToolStatus.Ok, "other.desktop\n") : Run(log, tool, args)));
+            Assert.DoesNotContain(calls, c => c.StartsWith("xdg-mime default", StringComparison.Ordinal));
+            Assert.False(SnapshotFileType.InstallOnLinux("/home/emma/EmmaSpace.AppImage", appIcon, fileIcon, home, null, Run));
+        }
+        finally
+        {
+            Directory.Delete(home, recursive: true);
+        }
+    }
+
+    [Fact]
     public void Snapshots_start_with_the_bytes_the_linux_mime_type_matches()
     {
         using var tree = TreeFixtures.Sample();

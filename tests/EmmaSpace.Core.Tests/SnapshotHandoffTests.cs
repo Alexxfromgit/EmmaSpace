@@ -41,6 +41,22 @@ public class SnapshotHandoffTests
     }
 
     [Fact]
+    public async Task A_running_app_that_stalls_mid_exchange_is_given_up_on()
+    {
+        // Accepts the connection, then never sends its process id: the new process must not wait forever.
+        var pipe = TestPipe();
+        await using var server = new System.IO.Pipes.NamedPipeServerStream(pipe, System.IO.Pipes.PipeDirection.InOut, 1,
+            System.IO.Pipes.PipeTransmissionMode.Byte, System.IO.Pipes.PipeOptions.Asynchronous | System.IO.Pipes.PipeOptions.CurrentUserOnly);
+        var connected = server.WaitForConnectionAsync(TestContext.Current.CancellationToken);
+        var stopwatch = Stopwatch.StartNew();
+        var sent = await Task.Run(() => SnapshotHandoff.TrySend("/tmp/a.emmasnap", TimeSpan.FromSeconds(5), pipe),
+            TestContext.Current.CancellationToken).WaitAsync(TimeSpan.FromSeconds(20), TestContext.Current.CancellationToken);
+        Assert.False(sent);
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(12), $"took {stopwatch.Elapsed}");
+        await connected;
+    }
+
+    [Fact]
     public void A_stopped_app_no_longer_answers()
     {
         var pipe = TestPipe();

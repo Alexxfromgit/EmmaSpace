@@ -37,7 +37,10 @@ public static partial class SnapshotHandoff
         if (path.Length is 0 or > MaxPathBytes) return false;
         try
         {
-            using var pipe = new NamedPipeClientStream(".", pipeName ?? DefaultPipeName, PipeDirection.InOut, PipeOptions.CurrentUserOnly);
+            // Asynchronous, so the exchange timeout cancels a read or write as real overlapped I/O rather than
+            // relying on how the runtime emulates cancellation for a pipe opened for synchronous I/O.
+            using var pipe = new NamedPipeClientStream(".", pipeName ?? DefaultPipeName, PipeDirection.InOut,
+                PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
             pipe.Connect(connectTimeout);
             using var cancel = new CancellationTokenSource(ExchangeTimeout);
             var pid = new byte[4];
@@ -57,7 +60,14 @@ public static partial class SnapshotHandoff
             return false;
         }
 
-        static void Wait(ValueTask task) => task.AsTask().GetAwaiter().GetResult();
+        // The token ends a stalled exchange; the bounded wait is a backstop should an operation ignore it.
+        static void Wait(ValueTask operation)
+        {
+            var task = operation.AsTask();
+            if (Task.WhenAny(task, Task.Delay(ExchangeTimeout + TimeSpan.FromSeconds(1))).GetAwaiter().GetResult() != task)
+                throw new TimeoutException("The running app did not answer.");
+            task.GetAwaiter().GetResult();
+        }
     }
 
     /// <summary>

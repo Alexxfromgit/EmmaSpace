@@ -40,7 +40,7 @@ public partial class App : Application
             if (ElevationService.StartupScanPath(desktop.Args) is { } path)
                 window.Opened += (_, _) => viewModel.StartScan(path);
             else if (SnapshotFileType.FindInArguments(desktop.Args) is { } snapshot)
-                window.Opened += (_, _) => _ = viewModel.OpenSnapshotFileAsync(snapshot); // double-clicked on Windows or Linux
+                window.Opened += (_, _) => _ = viewModel.OfferSnapshotAsync(snapshot, ask: false); // double-clicked on Windows or Linux
             OpenSnapshotsFromFinder(window, viewModel);
             window.Opened += (_, _) => _ = viewModel.Updates.CheckOnStartupAsync();
             window.Opened += (_, _) => DesktopIntegration.StartOnLinux();
@@ -49,18 +49,21 @@ public partial class App : Application
         base.OnFrameworkInitializationCompleted();
     }
 
-    /// <summary>Brings the window forward and asks whether to open a snapshot double-clicked meanwhile.</summary>
+    /// <summary>
+    /// Brings the window forward and asks whether to open a snapshot double-clicked meanwhile. The view
+    /// model checks the file off the UI thread and queues the question behind any earlier one.
+    /// </summary>
     private static void Offer(Window window, MainWindowViewModel viewModel, string snapshot)
     {
-        if (!SnapshotFileType.IsSnapshot(snapshot)) return;
         if (window.WindowState == WindowState.Minimized) window.WindowState = WindowState.Normal;
         window.Activate();
         _ = viewModel.OfferSnapshotAsync(snapshot);
     }
 
     // macOS hands a double-clicked document to the app as an "open files" event instead of on the
-    // command line: once for the file that launched it (opened directly) and again for every file
-    // double-clicked while it runs (asked about first, like on Windows and Linux).
+    // command line: once for the file(s) that launched it and again for every file double-clicked
+    // while it runs. Only the first launch file opens directly; every other one is asked about first,
+    // like on Windows and Linux, in the order Finder sent them (the view model skips non-snapshots).
     private void OpenSnapshotsFromFinder(Window window, MainWindowViewModel viewModel)
     {
         if (this.TryGetFeature<IActivatableLifetime>() is not { } activatable) return;
@@ -71,13 +74,16 @@ public partial class App : Application
         activatable.Activated += (_, e) =>
         {
             if (e is not FileActivatedEventArgs files) return;
-            var snapshot = files.Files.Select(f => f.TryGetLocalPath()).FirstOrDefault(SnapshotFileType.IsSnapshot);
-            if (snapshot is null) return;
+            var paths = files.Files.Select(f => f.TryGetLocalPath()).OfType<string>().ToList();
+            if (paths.Count == 0) return;
             Dispatcher.UIThread.Post(() =>
             {
                 var running = openedAt is { } opened && DateTime.UtcNow - opened > TimeSpan.FromSeconds(2);
-                if (running || viewModel.HasTree) Offer(window, viewModel, snapshot);
-                else _ = viewModel.OpenSnapshotFileAsync(snapshot);
+                foreach (var path in paths)
+                {
+                    if (running || viewModel.HasTree) Offer(window, viewModel, path);
+                    else _ = viewModel.OfferSnapshotAsync(path, ask: false); // asks anyway if it isn't the first
+                }
             });
         };
     }

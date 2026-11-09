@@ -21,8 +21,14 @@ public static partial class SnapshotFileType
     /// <summary>The first launch argument that names an existing snapshot (how a double-click arrives).</summary>
     public static string? FindInArguments(IEnumerable<string>? args) => args?.FirstOrDefault(IsSnapshot);
 
+    /// <summary>
+    /// Whether <paramref name="path"/> is a snapshot file to open: one named with the extension, or one
+    /// that starts like a snapshot (the Linux MIME type also matches renamed snapshots by their first
+    /// bytes, so the desktop may hand those over too). Asks the disk, so keep it off the UI thread.
+    /// </summary>
     public static bool IsSnapshot(string? path) =>
-        !string.IsNullOrEmpty(path) && path.EndsWith(SnapshotFile.Extension, StringComparison.OrdinalIgnoreCase) && File.Exists(path);
+        !string.IsNullOrEmpty(path) && File.Exists(path) &&
+        (path.EndsWith(SnapshotFile.Extension, StringComparison.OrdinalIgnoreCase) || SnapshotFile.StartsLikeSnapshot(path));
 
     // Windows
 
@@ -106,25 +112,49 @@ public static partial class SnapshotFileType
     /// Makes the AppImage at <paramref name="appImage"/> known to the desktop: an Emma Space menu entry
     /// that opens .emmasnap files, the MIME type (by extension and by the file's first bytes) and both
     /// icons, all under <paramref name="dataHome"/> (normally ~/.local/share). Files are only rewritten
-    /// when they change, e.g. when the AppImage moved. Returns true if anything was written.
+    /// when they change, e.g. when the AppImage moved. Then the desktop's caches are refreshed and Emma
+    /// Space becomes the default app for snapshots; only once that has worked is it recorded in
+    /// <see cref="RegistrationStampPath"/>, so a refresh that failed, timed out or was interrupted is
+    /// retried on the next start. Returns true if anything was written or refreshed.
     /// <paramref name="refreshDesktop"/> false skips the desktop tools (caches, default app), for tests.
     /// </summary>
     public static bool InstallOnLinux(string appImage, byte[] appIconPng, byte[] fileIconPng, string dataHome,
-        Action<string>? log = null, bool refreshDesktop = true)
+        Action<string>? log = null, bool refreshDesktop = true) =>
+        InstallOnLinux(appImage, appIconPng, fileIconPng, dataHome, log, refreshDesktop ? RunTool : null);
+
+    /// <summary>Records which registration the desktop's caches last took in successfully.</summary>
+    public static string RegistrationStampPath(string dataHome) => Path.Combine(dataHome, "EmmaSpace", "desktop-registration");
+
+    /// <summary>What a desktop tool did: ran and succeeded, isn't installed, or failed or timed out.</summary>
+    internal enum ToolStatus { Ok, Missing, Failed }
+
+    /// <summary><see cref="InstallOnLinux(string, byte[], byte[], string, Action{string}?, bool)"/> with the desktop tools replaceable, for tests.</summary>
+    internal static bool InstallOnLinux(string appImage, byte[] appIconPng, byte[] fileIconPng, string dataHome,
+        Action<string>? log, Func<Action<string>?, string, string[], (ToolStatus Status, string Output)>? runTool)
     {
         var applications = Path.Combine(dataHome, "applications");
         var mimePackages = Path.Combine(dataHome, "mime", "packages");
         var icons = Path.Combine(dataHome, "icons", "hicolor", "256x256");
+        (string Path, byte[] Content)[] files =
+        [
+            (Path.Combine(applications, DesktopId + ".desktop"), Encoding.UTF8.GetBytes(DesktopEntry(appImage))),
+            (Path.Combine(mimePackages, DesktopId + ".xml"), Encoding.UTF8.GetBytes(MimeInfo())),
+            (Path.Combine(icons, "apps", DesktopId + ".png"), appIconPng),
+            (Path.Combine(icons, "mimetypes", MimeIconName + ".png"), fileIconPng),
+        ];
         var changed = false;
-        changed |= WriteIfChanged(Path.Combine(applications, DesktopId + ".desktop"), Encoding.UTF8.GetBytes(DesktopEntry(appImage)));
-        changed |= WriteIfChanged(Path.Combine(mimePackages, DesktopId + ".xml"), Encoding.UTF8.GetBytes(MimeInfo()));
-        changed |= WriteIfChanged(Path.Combine(icons, "apps", DesktopId + ".png"), appIconPng);
-        changed |= WriteIfChanged(Path.Combine(icons, "mimetypes", MimeIconName + ".png"), fileIconPng);
-        if (!changed || !refreshDesktop) return changed;
+        foreach (var (path, content) in files) changed |= WriteIfChanged(path, content);
+        if (runTool is null) return changed;
 
-        // Refresh the desktop's caches. Each tool is optional: without it the desktop picks the files up later.
-        TryRun(log, "update-mime-database", Path.Combine(dataHome, "mime"));
-        TryRun(log, "update-desktop-database", applications);
+        var stampPath = RegistrationStampPath(dataHome);
+        var stamp = Fingerprint(files);
+        if (!changed && ReadStamp(stampPath) == stamp) return false; // already taken in by the desktop
+
+        // Refresh the desktop's caches. A tool that isn't installed is skipped (the desktop then picks
+        // the files up itself); one that fails or times out leaves the stamp unwritten, so the next start retries.
+        var complete = true;
+        complete &= runTool(log, "update-mime-database", [Path.Combine(dataHome, "mime")]).Status != ToolStatus.Failed;
+        complete &= runTool(log, "update-desktop-database", [applications]).Status != ToolStatus.Failed;
         // The user's icon folder has no icon cache (one would hide icons other apps add later without
         // rebuilding it); toolkits notice new icons by the theme folder's modification time.
         try
@@ -136,9 +166,40 @@ public static partial class SnapshotFileType
             log?.Invoke($"icons: {ex.Message}");
         }
         // Become the default only where the user hasn't chosen an app for snapshots.
-        if (string.IsNullOrWhiteSpace(TryRead(log, "xdg-mime", "query", "default", MimeType)))
-            TryRun(log, "xdg-mime", "default", DesktopId + ".desktop", MimeType);
+        var current = runTool(log, "xdg-mime", ["query", "default", MimeType]);
+        if (current.Status == ToolStatus.Failed)
+            complete = false;
+        else if (current.Status == ToolStatus.Ok && string.IsNullOrWhiteSpace(current.Output))
+            complete &= runTool(log, "xdg-mime", ["default", DesktopId + ".desktop", MimeType]).Status != ToolStatus.Failed;
+
+        if (complete) WriteIfChanged(stampPath, Encoding.UTF8.GetBytes(stamp));
+        else log?.Invoke("the desktop did not take in every change; trying again on the next start");
         return true;
+    }
+
+    // One line naming every file's content, so an older registration or a half-finished one never matches.
+    private static string Fingerprint((string Path, byte[] Content)[] files)
+    {
+        using var hash = System.Security.Cryptography.IncrementalHash.CreateHash(System.Security.Cryptography.HashAlgorithmName.SHA256);
+        foreach (var (path, content) in files)
+        {
+            hash.AppendData(Encoding.UTF8.GetBytes(path + "\n"));
+            hash.AppendData(BitConverter.GetBytes((long)content.Length));
+            hash.AppendData(content);
+        }
+        return Convert.ToHexString(hash.GetHashAndReset()) + "\n";
+    }
+
+    private static string? ReadStamp(string path)
+    {
+        try
+        {
+            return File.Exists(path) ? File.ReadAllText(path) : null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
     }
 
     public static string DesktopEntry(string appImage) =>
@@ -199,10 +260,8 @@ public static partial class SnapshotFileType
         return true;
     }
 
-    private static void TryRun(Action<string>? log, string tool, params string[] args) => TryRead(log, tool, args);
-
-    /// <summary>Runs a desktop tool and returns its output, or null (logged) if it is missing or fails.</summary>
-    private static string? TryRead(Action<string>? log, string tool, params string[] args)
+    /// <summary>Runs a desktop tool and returns its output; a missing tool, failure or timeout is logged.</summary>
+    private static (ToolStatus Status, string Output) RunTool(Action<string>? log, string tool, string[] args)
     {
         try
         {
@@ -213,25 +272,32 @@ public static partial class SnapshotFileType
                 UseShellExecute = false,
                 CreateNoWindow = true,
             });
-            if (process is null) return null;
+            if (process is null) return (ToolStatus.Missing, "");
             // Both pipes drain in the background, so a chatty tool can't block and the timeout applies.
             var output = process.StandardOutput.ReadToEndAsync();
             var error = process.StandardError.ReadToEndAsync();
             if (!process.WaitForExit(TimeSpan.FromSeconds(30)))
             {
-                process.Kill(entireProcessTree: true);
+                try
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+                catch (InvalidOperationException)
+                {
+                    // it exited just now
+                }
                 log?.Invoke($"{tool}: timed out");
-                return null;
+                return (ToolStatus.Failed, "");
             }
             process.WaitForExit(); // let the output readers finish
-            if (process.ExitCode == 0) return output.Result;
+            if (process.ExitCode == 0) return (ToolStatus.Ok, output.Result);
             log?.Invoke($"{tool}: exit code {process.ExitCode}: {error.Result.Trim()}");
-            return null;
+            return (ToolStatus.Failed, "");
         }
         catch (System.ComponentModel.Win32Exception ex)
         {
             log?.Invoke($"{tool}: {ex.Message}");
-            return null;
+            return (ToolStatus.Missing, "");
         }
     }
 }
