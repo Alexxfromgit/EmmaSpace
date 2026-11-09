@@ -27,7 +27,13 @@ Get the latest version from [Releases](https://github.com/Alexxfromgit/EmmaSpace
 | Windows 11 on ARM | `EmmaSpace-win-arm64-Setup.exe` | `EmmaSpace-win-arm64-Portable.zip` |
 | macOS 12+ (Apple silicon) | `EmmaSpace-osx-arm64-Setup.pkg` | `EmmaSpace-osx-arm64-Portable.zip` |
 | macOS 12+ (Intel) | `EmmaSpace-osx-x64-Setup.pkg` | `EmmaSpace-osx-x64-Portable.zip` |
-| Linux (x64) | `.AppImage` (runs as is, no install) | |
+| Linux (x64) | `.AppImage` (runs as is, no install; see below) | |
+
+On Linux the AppImage adds itself to your applications menu when it starts, so `.emmasnap`
+snapshots open in it with a double-click. It writes `com.alexxfromgit.emmaspace.desktop` to
+`~/.local/share/applications`, `com.alexxfromgit.emmaspace.xml` to `~/.local/share/mime/packages`
+and two icons under `~/.local/share/icons/hicolor/256x256`. Delete those files to undo it (they
+come back the next time the AppImage runs).
 
 Installed copies update themselves: Emma Space checks for a new release shortly after it starts
 and offers to restart into it (you can turn that off in the version menu in the status bar).

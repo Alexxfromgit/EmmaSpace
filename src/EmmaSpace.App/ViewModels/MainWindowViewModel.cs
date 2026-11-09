@@ -24,6 +24,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
     private readonly SettingsService _settings;
     private readonly ElevationService _elevation;
     private CancellationTokenSource? _scanCts;
+    private int _loadGeneration; // bumped by every scan and snapshot load; the newest one wins
     private bool _syncingSelection;
 
     public MainWindowViewModel(IScanner scanner, IFileActions fileActions, IDialogService dialogs, SettingsService settings,
@@ -202,6 +203,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
     {
         if (IsScanning) return;
         IsScanning = true;
+        _loadGeneration++; // a snapshot still loading must not replace this scan's result
         _scanCts = new CancellationTokenSource();
         ProgressFiles = ProgressBytes = ProgressPath = ProgressElapsed = "";
         var stopwatch = Stopwatch.StartNew();
@@ -444,14 +446,26 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
 
     /// <summary>
     /// Shows a saved snapshot, e.g. one the user double-clicked in Explorer, Finder or a Linux file
-    /// manager. Ignored while a scan runs.
+    /// manager. Not while a scan runs, and a load that a newer scan or snapshot overtook is dropped.
     /// </summary>
     public async Task OpenSnapshotFileAsync(string path)
     {
-        if (IsScanning) return;
+        if (IsScanning)
+        {
+            await _dialogs.ShowErrorAsync("Snapshot not opened",
+                $"Emma Space is scanning. Open \"{Path.GetFileName(path)}\" again once the scan has finished or been cancelled.");
+            return;
+        }
+        var load = ++_loadGeneration;
         try
         {
-            SetTree(await SnapshotFile.LoadAsync(path));
+            var tree = await SnapshotFile.LoadAsync(path);
+            if (load != _loadGeneration || IsScanning)
+            {
+                tree.Dispose();
+                return;
+            }
+            SetTree(tree);
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException)
         {

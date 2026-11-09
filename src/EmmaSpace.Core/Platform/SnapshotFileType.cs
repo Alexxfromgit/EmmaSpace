@@ -125,7 +125,16 @@ public static partial class SnapshotFileType
         // Refresh the desktop's caches. Each tool is optional: without it the desktop picks the files up later.
         TryRun(log, "update-mime-database", Path.Combine(dataHome, "mime"));
         TryRun(log, "update-desktop-database", applications);
-        TryRun(log, "gtk-update-icon-cache", "--force", "--ignore-theme-index", Path.Combine(dataHome, "icons", "hicolor"));
+        // The user's icon folder has no icon cache (one would hide icons other apps add later without
+        // rebuilding it); toolkits notice new icons by the theme folder's modification time.
+        try
+        {
+            Directory.SetLastWriteTimeUtc(Path.Combine(dataHome, "icons", "hicolor"), DateTime.UtcNow);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            log?.Invoke($"icons: {ex.Message}");
+        }
         // Become the default only where the user hasn't chosen an app for snapshots.
         if (string.IsNullOrWhiteSpace(TryRead(log, "xdg-mime", "query", "default", MimeType)))
             TryRun(log, "xdg-mime", "default", DesktopId + ".desktop", MimeType);
@@ -142,8 +151,9 @@ public static partial class SnapshotFileType
         Exec={QuoteExec(appImage)} %f
         Icon={DesktopId}
         Terminal=false
-        Categories=Utility;System;Filesystem;
+        Categories=Utility;
         MimeType={MimeType};
+        StartupWMClass=EmmaSpace
 
         """;
 
@@ -204,15 +214,17 @@ public static partial class SnapshotFileType
                 CreateNoWindow = true,
             });
             if (process is null) return null;
+            // Both pipes drain in the background, so a chatty tool can't block and the timeout applies.
+            var output = process.StandardOutput.ReadToEndAsync();
             var error = process.StandardError.ReadToEndAsync();
-            var output = process.StandardOutput.ReadToEnd();
             if (!process.WaitForExit(TimeSpan.FromSeconds(30)))
             {
-                process.Kill();
+                process.Kill(entireProcessTree: true);
                 log?.Invoke($"{tool}: timed out");
                 return null;
             }
-            if (process.ExitCode == 0) return output;
+            process.WaitForExit(); // let the output readers finish
+            if (process.ExitCode == 0) return output.Result;
             log?.Invoke($"{tool}: exit code {process.ExitCode}: {error.Result.Trim()}");
             return null;
         }
