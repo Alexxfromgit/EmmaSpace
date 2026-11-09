@@ -2,6 +2,7 @@ using Avalonia.Controls;
 using Avalonia.Input.Platform;
 using Avalonia.Platform.Storage;
 using EmmaSpace.App.Views;
+using EmmaSpace.Core.Platform;
 
 namespace EmmaSpace.App.Services;
 
@@ -48,11 +49,20 @@ public sealed class DialogService(Window owner) : IDialogService
         var file = await owner.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
         {
             Title = title,
-            SuggestedFileName = suggestedName,
+            SuggestedFileName = SaveFileName.Suggestion(suggestedName, extension),
             DefaultExtension = extension.TrimStart('.'),
             FileTypeChoices = [new FilePickerFileType(filterName) { Patterns = ["*" + extension] }],
+            ShowOverwritePrompt = true, // the GTK dialog (Linux without a desktop portal) skips it otherwise
         });
-        return file?.TryGetLocalPath();
+        if (file?.TryGetLocalPath() is not { } picked) return null;
+
+        // The dialog asked about replacing the name it returned, not the one fixed up here.
+        var path = SaveFileName.WithSingleExtension(picked, extension);
+        if (path != picked && File.Exists(path) &&
+            !await ConfirmAsync("Replace file?", $"\"{Path.GetFileName(path)}\" already exists. Do you want to replace it?",
+                "Replace", destructive: true))
+            return null;
+        return path;
     }
 
     public Task<bool> ConfirmAsync(string title, string message, string confirmText, bool destructive = false) =>
