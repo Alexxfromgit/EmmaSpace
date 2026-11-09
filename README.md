@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="branding/emmaspace-readme.jpg" alt="Emma Space: disk space analyzer" width="100%">
+  <img src="branding/emmaspace-readme.png" alt="Emma Space: disk space analyzer" width="100%">
 </p>
 
 # <img src="src/EmmaSpace.App/Assets/emmaspace.png" alt="" width="36" align="top"> Emma Space
