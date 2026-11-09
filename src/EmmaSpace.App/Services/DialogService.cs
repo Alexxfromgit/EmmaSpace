@@ -56,10 +56,10 @@ public sealed class DialogService(Window owner) : IDialogService
     }
 
     public Task<bool> ConfirmAsync(string title, string message, string confirmText, bool destructive = false) =>
-        new MessageDialog(title, message, confirmText, "Cancel", destructive, withArt: true).ShowDialog<bool>(owner);
+        new MessageDialog(title, message, confirmText, "Cancel", destructive, DialogArt.Question).ShowDialog<bool>(owner);
 
     public Task ShowErrorAsync(string title, string message) =>
-        new MessageDialog(title, message, "OK", null, false).ShowDialog<bool>(owner);
+        new MessageDialog(title, message, "OK", null, false, DialogArt.Error).ShowDialog<bool>(owner);
 
     public async Task SetClipboardTextAsync(string text)
     {

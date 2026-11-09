@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Generates the portrait shown in Emma Space's confirmation dialogs from branding/emmaspace-dialog-art.png.
+"""Generates the portraits shown in Emma Space's dialogs from the art in branding/.
 
-The source is a wide painting with Emma in the middle. This crops a portrait around her (face and
-open hand) at the dialog panel's 7:10 shape and scales it for 2x displays:
-  src/EmmaSpace.App/Assets/dialog-emma.jpg   420 x 600 px (shown at 210 x 300)
-The dialog fades the panel's right edge into its background itself. Needs Pillow; the result is committed.
+Each source is a wide painting with Emma in the middle. This crops a portrait around her at the
+dialog panel's 7:10 shape and scales it for 2x displays (420 x 600 px, shown at 210 x 300):
+  branding/emmaspace-dialog-art.png  ->  src/EmmaSpace.App/Assets/dialog-emma.jpg        (questions)
+  branding/emmaspace-error-art.png   ->  src/EmmaSpace.App/Assets/dialog-emma-error.jpg  (errors)
+The dialog fades each portrait's right edge into its background itself, so keep her face left of
+about 60 % of the crop. Needs Pillow; the results are committed.
 
-Usage: python3 build/make-dialog-art.py [--source PATH] [--crop X,Y,W]
+Usage: python3 build/make-dialog-art.py [--only question|error] [--crop X,Y,W]
 """
 import argparse
 import pathlib
@@ -14,23 +16,37 @@ import pathlib
 from PIL import Image
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-OUT = ROOT / "src" / "EmmaSpace.App" / "Assets" / "dialog-emma.jpg"
+ASSETS = ROOT / "src" / "EmmaSpace.App" / "Assets"
 WIDTH, HEIGHT = 420, 600
+
+# name: (source art, output, crop as x,y,width fractions of the art's width; the height follows from 7:10)
+PORTRAITS = {
+    "question": ("emmaspace-dialog-art.png", "dialog-emma.jpg", (0.29, 0.052, 0.443)),       # face and open hand
+    "error": ("emmaspace-error-art.png", "dialog-emma-error.jpg", (0.374, 0.039, 0.41)),     # face and warning sign
+}
+
+
+def make(source: pathlib.Path, out: pathlib.Path, crop: tuple[float, float, float]) -> None:
+    art = Image.open(source).convert("RGB")
+    x, y, w = (v * art.width for v in crop)
+    h = w * HEIGHT / WIDTH
+    portrait = art.crop((round(x), round(y), round(x + w), round(min(y + h, art.height))))
+    portrait.resize((WIDTH, HEIGHT), Image.Resampling.LANCZOS).save(out, "JPEG", quality=90, optimize=True, progressive=True)
+    print(f"Wrote {out}")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--source", type=pathlib.Path, default=ROOT / "branding" / "emmaspace-dialog-art.png")
-    parser.add_argument("--crop", default="0.29,0.052,0.443",
-                        help="x,y,width as fractions of the art's width; the height follows from 7:10")
+    parser.add_argument("--only", choices=sorted(PORTRAITS), help="make just this portrait")
+    parser.add_argument("--crop", help="x,y,width for --only, overriding its default")
     args = parser.parse_args()
 
-    art = Image.open(args.source).convert("RGB")
-    x, y, w = (float(v) * art.width for v in args.crop.split(","))
-    h = w * HEIGHT / WIDTH
-    portrait = art.crop((round(x), round(y), round(x + w), round(min(y + h, art.height))))
-    portrait.resize((WIDTH, HEIGHT), Image.Resampling.LANCZOS).save(OUT, "JPEG", quality=90, optimize=True, progressive=True)
-    print(f"Wrote {OUT}")
+    for name, (source, out, crop) in PORTRAITS.items():
+        if args.only and name != args.only:
+            continue
+        if args.crop:
+            crop = tuple(float(v) for v in args.crop.split(","))
+        make(ROOT / "branding" / source, ASSETS / out, crop)
 
 
 if __name__ == "__main__":

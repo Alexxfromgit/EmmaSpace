@@ -3,14 +3,12 @@
         x:Class="EmmaSpace.App.Views.MessageDialog"
         Width="440" SizeToContent="Height" CanResize="False" CanMinimize="False" CanMaximize="False"
         WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
-  <!-- Confirmations show Emma on the left: her portrait fills the panel's height and its right edge
-       fades into the dialog's background. Plain messages (errors) are the compact text column only. -->
+  <!-- Emma on the left (a portrait for questions, another for errors): it fills the panel's height and
+       its right edge fades into the dialog's background. Without a portrait it is the text column only. -->
   <Grid ColumnDefinitions="Auto,*">
-    <!-- A background brush, not an Image: it fills whatever height the text needs and never sets it. -->
+    <!-- The portrait is the panel's background brush (set in code), not an Image: it fills whatever
+         height the text needs and never sets it. -->
     <Panel x:Name="ArtPanel" Width="210" MinHeight="290" ClipToBounds="True" IsVisible="False">
-      <Panel.Background>
-        <ImageBrush Source="avares://EmmaSpace/Assets/dialog-emma.jpg" Stretch="UniformToFill" AlignmentY="Top" />
-      </Panel.Background>
       <Panel.OpacityMask>
         <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,0%">
           <GradientStop Offset="0" Color="Black" />
