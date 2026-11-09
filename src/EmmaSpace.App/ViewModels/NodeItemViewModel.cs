@@ -85,6 +85,9 @@ public partial class NodeItemViewModel : ObservableObject
 
     public static string MoveToTrashHeader { get; } = $"Move to {FileActions.TrashName}…";
 
+    /// <summary>The name each platform uses: Finder on macOS, a plain folder elsewhere.</summary>
+    public static string RevealHeader { get; } = OperatingSystem.IsMacOS() ? "Show in Finder" : "Show in folder";
+
     /// <summary>
     /// False for placeholder rows (e.g. "… N more items"): they carry their owner's node, so no
     /// file action may run on them.

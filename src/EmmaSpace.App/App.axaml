@@ -127,6 +127,11 @@
     </Style>
 
     <!-- Buttons -->
+    <!-- Text stays centred when a button is wider than its content (MinWidth, a stretched column). -->
+    <Style Selector="Button">
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
     <!-- "accent" is Fluent's own class; its colours come from SystemAccentColor above. -->
     <Style Selector="Button.accent">
       <Setter Property="FontWeight" Value="SemiBold" />

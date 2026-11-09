@@ -17,7 +17,7 @@
         <Template>
           <ContextMenu x:DataType="vm:NodeItemViewModel">
             <MenuItem Header="Open" Command="{Binding OpenCommand}" />
-            <MenuItem Header="Show in folder" Command="{Binding RevealCommand}" />
+            <MenuItem Header="{x:Static vm:NodeItemViewModel.RevealHeader}" Command="{Binding RevealCommand}" />
             <MenuItem Header="Copy path" Command="{Binding CopyPathCommand}" />
             <Separator />
             <MenuItem Header="Show in tree" Command="{Binding ShowInTreeCommand}" />
