@@ -72,7 +72,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
     public bool CanShowProperties => _fileActions.CanShowProperties;
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(HasTree), nameof(IsHome), nameof(WindowTitle))]
+    [NotifyPropertyChangedFor(nameof(HasTree), nameof(IsHome), nameof(WindowTitle), nameof(IsRescan), nameof(ScanLabel), nameof(ScanTip))]
+    [NotifyCanExecuteChangedFor(nameof(RescanCommand))]
     public partial FileTree? Tree { get; private set; }
 
     [ObservableProperty]
@@ -85,7 +86,25 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
     public string WindowTitle => Tree is null ? "Emma Space" : $"Emma Space — {Tree.RootPath}";
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsRescan), nameof(ScanLabel), nameof(ScanTip))]
     public partial string PathText { get; set; }
+
+    /// <summary>What a rescan reads: the scanned folder, or for a snapshot the folder it was taken of.</summary>
+    private string? ResultsPath => Tree is null ? null : Tree.Info.Source == ScanSource.Snapshot ? Tree.Info.RootPath : Tree.RootPath;
+
+    /// <summary>
+    /// True when the path box names the results on screen. The one scan button then reads "Rescan";
+    /// once another path is typed it reads "Analyze" again.
+    /// </summary>
+    public bool IsRescan => ResultsPath is { } results && ScanPaths.AreSame(PathText, results);
+
+    public string ScanLabel => IsRescan ? "Rescan" : "Analyze";
+
+    public static string RescanShortcut { get; } = OperatingSystem.IsMacOS() ? "⌘R" : "F5";
+
+    public string ScanTip => IsRescan
+        ? $"Scan {ResultsPath} again to see its current state ({RescanShortcut})"
+        : "Map the drive or folder in the box (Enter)";
 
     /// <summary>Bumped whenever the tree changes in place, so the treemap re-lays itself out.</summary>
     [ObservableProperty]
@@ -161,11 +180,15 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
     // (legal on macOS and Linux).
     private static string TypedPath(string text) => Directory.Exists(text) ? text : text.Trim();
 
-    [RelayCommand(CanExecute = nameof(CanScan))]
+    private bool CanRescan() => !IsScanning && Tree is not null;
+
+    /// <summary>Scans the results on screen again (F5 / ⌘R), whatever the path box holds.</summary>
+    [RelayCommand(CanExecute = nameof(CanRescan))]
     private Task RescanAsync()
     {
-        var path = Tree?.Info.Source == ScanSource.Snapshot ? Tree.Info.RootPath : Tree?.RootPath;
-        return path is null ? Task.CompletedTask : ScanPathAsync(path);
+        if (ResultsPath is not { } path) return Task.CompletedTask;
+        PathText = path;
+        return ScanPathAsync(path);
     }
 
     [RelayCommand]
@@ -250,6 +273,9 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
         FocusNode = FileTree.Root;
         HoveredNode = FileTree.None;
         if (tree is not null) tree.NodeRemoved += OnNodeRemoved;
+
+        // The path box names what is on screen, so the scan button offers to rescan the snapshot's folder.
+        if (tree?.Info.Source == ScanSource.Snapshot) PathText = tree.Info.RootPath;
 
         FolderTree.Load(tree);
         foreach (var vm in AnalysisViewModels) vm.Load(tree);

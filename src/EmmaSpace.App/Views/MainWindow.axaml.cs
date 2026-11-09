@@ -1,5 +1,7 @@
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using CommunityToolkit.Mvvm.Input;
 using EmmaSpace.App.ViewModels;
 
 namespace EmmaSpace.App.Views;
@@ -18,6 +20,15 @@ public partial class MainWindow : Window
         };
         FolderList.DoubleTapped += (_, _) => ToggleSelectedRow(null);
         FolderList.KeyDown += OnFolderListKeyDown;
+
+        // Rescan the results on screen: F5 everywhere, plus Ctrl+R (⌘R on macOS).
+        var rescan = new RelayCommand(() =>
+        {
+            if (ViewModel?.RescanCommand is { } command && command.CanExecute(null)) command.Execute(null);
+        });
+        var modifiers = Application.Current?.PlatformSettings?.HotkeyConfiguration.CommandModifiers ?? KeyModifiers.Control;
+        KeyBindings.Add(new KeyBinding { Gesture = new KeyGesture(Key.F5), Command = rescan });
+        KeyBindings.Add(new KeyBinding { Gesture = new KeyGesture(Key.R, modifiers), Command = rescan });
     }
 
     private MainWindowViewModel? ViewModel => DataContext as MainWindowViewModel;

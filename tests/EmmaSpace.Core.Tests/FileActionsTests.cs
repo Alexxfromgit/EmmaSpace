@@ -19,6 +19,27 @@ public class FileActionsTests
     }
 
     [Fact]
+    public void Showing_a_deleted_item_in_its_folder_says_it_is_gone()
+    {
+        var missing = Path.Combine(Path.GetTempPath(), "emmaspace-missing-" + Guid.NewGuid().ToString("N"));
+        var ex = Assert.Throws<IOException>(() => new FileActions().Reveal(missing));
+        Assert.Contains("no longer exists", ex.Message);
+    }
+
+    [Theory]
+    [InlineData(@"C:\Movies\Crash.mkv", @"/select,""C:\Movies\Crash.mkv""")]
+    [InlineData(@"C:\My Movies\Crash [1996], uncut.mkv", @"/select,""C:\My Movies\Crash [1996], uncut.mkv""")]
+    public void Explorer_gets_the_path_quoted_after_the_comma(string path, string expected) =>
+        Assert.Equal(expected, FileActions.ExplorerSelectArguments(path));
+
+    [Theory]
+    [InlineData("/home/emma/Movies/Crash.mkv", "file:///home/emma/Movies/Crash.mkv")]
+    [InlineData("/home/emma/My Movies/a,b #1 100%.mkv", "file:///home/emma/My%20Movies/a%2Cb%20%231%20100%25.mkv")]
+    [InlineData("/home/emma/Фильмы", "file:///home/emma/%D0%A4%D0%B8%D0%BB%D1%8C%D0%BC%D1%8B")]
+    public void File_manager_uris_escape_every_segment(string path, string expected) =>
+        Assert.Equal(expected, FileActions.FileUri(path));
+
+    [Fact]
     public async Task Moving_a_missing_path_names_the_platform_bin_or_the_missing_file()
     {
         var missing = Path.Combine(Path.GetTempPath(), "emmaspace-missing-" + Guid.NewGuid().ToString("N"));

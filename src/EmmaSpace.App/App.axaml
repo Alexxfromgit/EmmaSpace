@@ -29,6 +29,8 @@
           <SolidColorBrush x:Key="EmmaDangerBrush" Color="#D33A4A" />
           <SolidColorBrush x:Key="EmmaGoodBrush" Color="#1E9E6A" />
           <SolidColorBrush x:Key="EmmaSelectionBrush" Color="#E4DDFF" />
+          <SolidColorBrush x:Key="EmmaCardHoverBrush" Color="#FBFAFF" />
+          <SolidColorBrush x:Key="EmmaCardHoverLineBrush" Color="#B6A4FF" />
         </ResourceDictionary>
         <ResourceDictionary x:Key="Dark">
           <SolidColorBrush x:Key="EmmaWindowBrush" Color="#121118" />
@@ -43,6 +45,8 @@
           <SolidColorBrush x:Key="EmmaDangerBrush" Color="#FF6B78" />
           <SolidColorBrush x:Key="EmmaGoodBrush" Color="#4CD69B" />
           <SolidColorBrush x:Key="EmmaSelectionBrush" Color="#302858" />
+          <SolidColorBrush x:Key="EmmaCardHoverBrush" Color="#23212F" />
+          <SolidColorBrush x:Key="EmmaCardHoverLineBrush" Color="#5B49B8" />
         </ResourceDictionary>
       </ResourceDictionary.ThemeDictionaries>
     </ResourceDictionary>
@@ -63,6 +67,38 @@
       <Setter Property="BorderBrush" Value="{DynamicResource EmmaLineBrush}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="CornerRadius" Value="12" />
+    </Style>
+
+    <!-- Clickable cards (the start page's drives). The card itself reacts to hover and press, so the
+         highlight follows its rounded corners instead of the button's square background. -->
+    <Style Selector="Button.card">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="CornerRadius" Value="12" />
+      <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="FocusAdorner">
+        <FocusAdornerTemplate>
+          <Border BorderThickness="2" BorderBrush="{DynamicResource EmmaAccentBrush}" CornerRadius="14" Margin="-2" />
+        </FocusAdornerTemplate>
+      </Setter>
+    </Style>
+    <Style Selector="Button.card:pointerover /template/ ContentPresenter#PART_ContentPresenter, Button.card:pressed /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Foreground" Value="{DynamicResource EmmaTextBrush}" />
+    </Style>
+    <Style Selector="Button.card Border.card">
+      <Setter Property="Transitions">
+        <Transitions>
+          <BrushTransition Property="Background" Duration="0:0:0.12" />
+          <BrushTransition Property="BorderBrush" Duration="0:0:0.12" />
+        </Transitions>
+      </Setter>
+    </Style>
+    <Style Selector="Button.card:pointerover Border.card">
+      <Setter Property="Background" Value="{DynamicResource EmmaCardHoverBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource EmmaCardHoverLineBrush}" />
     </Style>
 
     <Style Selector="TextBlock.muted">
