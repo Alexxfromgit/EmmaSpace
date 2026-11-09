@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <!-- Release Please bumps this (and CMakeLists.txt) in its release PR; do not edit by hand. -->
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <Product>Emma Space</Product>
     <Authors>Alexander Rubtsov</Authors>
     <Company>Alexander Rubtsov</Company>
