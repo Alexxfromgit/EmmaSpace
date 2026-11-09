@@ -15,6 +15,14 @@ internal static class Program
         var velopack = VelopackApp.Build();
         if (OperatingSystem.IsWindows()) velopack = WithSnapshotFileHooks(velopack);
         velopack.Run();
+
+        // A snapshot double-clicked while Emma Space is open goes to that window, which asks whether to
+        // open it, instead of starting a second one. (macOS sends it to the running app by itself.)
+        if (!OperatingSystem.IsMacOS() && Services.ElevationService.StartupScanPath(args) is null &&
+            SnapshotFileType.FindInArguments(args) is { } snapshot &&
+            SnapshotHandoff.TrySend(Path.GetFullPath(snapshot), TimeSpan.FromMilliseconds(500)))
+            return;
+
         BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
     }
 

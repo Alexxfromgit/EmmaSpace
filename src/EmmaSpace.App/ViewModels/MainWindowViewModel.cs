@@ -25,6 +25,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
     private readonly ElevationService _elevation;
     private CancellationTokenSource? _scanCts;
     private int _loadGeneration; // bumped by every scan and snapshot load; the newest one wins
+    private readonly SemaphoreSlim _snapshotOffers = new(1, 1);
     private bool _syncingSelection;
 
     public MainWindowViewModel(IScanner scanner, IFileActions fileActions, IDialogService dialogs, SettingsService settings,
@@ -442,6 +443,35 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
         if (IsScanning) return;
         var path = await _dialogs.OpenFileAsync("Open snapshot", "Emma Space snapshot", SnapshotFile.Extension);
         if (path is not null) await OpenSnapshotFileAsync(path);
+    }
+
+    /// <summary>
+    /// A snapshot the user double-clicked while Emma Space was already open: ask before opening it, since
+    /// it replaces what is on screen. One question at a time; files that arrive meanwhile wait their turn.
+    /// </summary>
+    public async Task OfferSnapshotAsync(string path)
+    {
+        await _snapshotOffers.WaitAsync();
+        try
+        {
+            var name = Path.GetFileName(path);
+            if (IsScanning)
+            {
+                await _dialogs.ShowErrorAsync("Snapshot not opened",
+                    $"Emma Space is scanning. Open \"{name}\" again once the scan has finished or been cancelled.");
+                return;
+            }
+            var about = SnapshotFile.TryReadSummary(path) is var (root, taken)
+                ? $"\n\nIt is a snapshot of {root}, taken {taken.ToString("g", CultureInfo.CurrentCulture)}."
+                : "";
+            var replaces = Tree is null ? "" : $"\n\nIt replaces the results on screen ({Tree.RootPath}).";
+            if (await _dialogs.ConfirmAsync("Open snapshot?", $"Open \"{name}\"?{about}{replaces}", "Open snapshot"))
+                await OpenSnapshotFileAsync(path);
+        }
+        finally
+        {
+            _snapshotOffers.Release();
+        }
     }
 
     /// <summary>

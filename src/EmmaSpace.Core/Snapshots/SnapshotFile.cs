@@ -76,6 +76,27 @@ public static class SnapshotFile
         brotli.Write(MemoryMarshal.AsBytes(names));
     }
 
+    /// <summary>
+    /// What a snapshot file is of and when it was taken, read from its header only (cheap, for asking
+    /// the user before loading). Null if it isn't a readable snapshot.
+    /// </summary>
+    public static (string RootPath, DateTimeOffset ScannedAt)? TryReadSummary(string path)
+    {
+        try
+        {
+            using var input = File.OpenRead(path);
+            using var reader = new BinaryReader(input, Encoding.UTF8);
+            if (!reader.ReadBytes(Magic.Length).AsSpan().SequenceEqual(Magic) || reader.ReadInt32() != FormatVersion) return null;
+            var rootPath = reader.ReadString();
+            var scannedAtMs = reader.ReadInt64();
+            return UnixTime.IsValid(scannedAtMs) ? (rootPath, DateTimeOffset.FromUnixTimeMilliseconds(scannedAtMs).ToLocalTime()) : null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
     public static FileTree Load(Stream input)
     {
         using var reader = new BinaryReader(input, Encoding.UTF8, leaveOpen: true);

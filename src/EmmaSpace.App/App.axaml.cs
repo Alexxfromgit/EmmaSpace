@@ -1,4 +1,5 @@
 using Avalonia;
+using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Avalonia.Platform.Storage;
@@ -27,8 +28,12 @@ public partial class App : Application
             var viewModel = _services.GetRequiredService<MainWindowViewModel>();
             window.DataContext = viewModel;
             desktop.MainWindow = window;
+            // Snapshots double-clicked while this window is open arrive from a short-lived new process.
+            var handoff = OperatingSystem.IsMacOS() ? null
+                : SnapshotHandoff.Listen(received => Dispatcher.UIThread.Post(() => Offer(window, viewModel, received)));
             desktop.ShutdownRequested += (_, _) =>
             {
+                handoff?.Dispose();
                 viewModel.Dispose();
                 _services.Dispose();
             };
@@ -36,7 +41,7 @@ public partial class App : Application
                 window.Opened += (_, _) => viewModel.StartScan(path);
             else if (SnapshotFileType.FindInArguments(desktop.Args) is { } snapshot)
                 window.Opened += (_, _) => _ = viewModel.OpenSnapshotFileAsync(snapshot); // double-clicked on Windows or Linux
-            OpenSnapshotsFromFinder(viewModel);
+            OpenSnapshotsFromFinder(window, viewModel);
             window.Opened += (_, _) => _ = viewModel.Updates.CheckOnStartupAsync();
             window.Opened += (_, _) => DesktopIntegration.StartOnLinux();
         }
@@ -44,16 +49,36 @@ public partial class App : Application
         base.OnFrameworkInitializationCompleted();
     }
 
-    // macOS hands a double-clicked document to the running app as an "open files" event, both at
-    // launch and while it runs, instead of on the command line.
-    private void OpenSnapshotsFromFinder(MainWindowViewModel viewModel)
+    /// <summary>Brings the window forward and asks whether to open a snapshot double-clicked meanwhile.</summary>
+    private static void Offer(Window window, MainWindowViewModel viewModel, string snapshot)
+    {
+        if (!SnapshotFileType.IsSnapshot(snapshot)) return;
+        if (window.WindowState == WindowState.Minimized) window.WindowState = WindowState.Normal;
+        window.Activate();
+        _ = viewModel.OfferSnapshotAsync(snapshot);
+    }
+
+    // macOS hands a double-clicked document to the app as an "open files" event instead of on the
+    // command line: once for the file that launched it (opened directly) and again for every file
+    // double-clicked while it runs (asked about first, like on Windows and Linux).
+    private void OpenSnapshotsFromFinder(Window window, MainWindowViewModel viewModel)
     {
         if (this.TryGetFeature<IActivatableLifetime>() is not { } activatable) return;
+        // The launch file arrives right as the app starts; anything after this settling time was
+        // double-clicked while it was already open.
+        DateTime? openedAt = null;
+        window.Opened += (_, _) => openedAt = DateTime.UtcNow;
         activatable.Activated += (_, e) =>
         {
             if (e is not FileActivatedEventArgs files) return;
             var snapshot = files.Files.Select(f => f.TryGetLocalPath()).FirstOrDefault(SnapshotFileType.IsSnapshot);
-            if (snapshot is not null) Dispatcher.UIThread.Post(() => _ = viewModel.OpenSnapshotFileAsync(snapshot));
+            if (snapshot is null) return;
+            Dispatcher.UIThread.Post(() =>
+            {
+                var running = openedAt is { } opened && DateTime.UtcNow - opened > TimeSpan.FromSeconds(2);
+                if (running || viewModel.HasTree) Offer(window, viewModel, snapshot);
+                else _ = viewModel.OpenSnapshotFileAsync(snapshot);
+            });
         };
     }
 
