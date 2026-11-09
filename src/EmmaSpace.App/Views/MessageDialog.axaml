@@ -1,14 +1,33 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="EmmaSpace.App.Views.MessageDialog"
-        Width="440" SizeToContent="Height" CanResize="False"
+        Width="440" SizeToContent="Height" CanResize="False" CanMinimize="False" CanMaximize="False"
         WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
-  <StackPanel Margin="24,20,24,20" Spacing="14">
-    <TextBlock x:Name="HeadingText" Classes="h2" TextWrapping="Wrap" />
-    <TextBlock x:Name="MessageText" TextWrapping="Wrap" Foreground="{DynamicResource EmmaMutedBrush}" />
-    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,8,0,0">
-      <Button x:Name="SecondaryButton" Click="OnSecondary" Padding="16,7" CornerRadius="8" />
-      <Button x:Name="PrimaryButton" Classes="accent" Click="OnPrimary" IsDefault="True" />
-    </StackPanel>
-  </StackPanel>
+  <!-- Emma on the left (a portrait for questions, another for errors): it fills the panel's height and
+       its right edge fades into the dialog's background. Without a portrait it is the text column only. -->
+  <Grid ColumnDefinitions="Auto,*">
+    <!-- The portrait is the panel's background brush (set in code), not an Image: it fills whatever
+         height the text needs and never sets it. -->
+    <Panel x:Name="ArtPanel" Width="210" MinHeight="290" ClipToBounds="True" IsVisible="False">
+      <Panel.OpacityMask>
+        <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,0%">
+          <GradientStop Offset="0" Color="Black" />
+          <GradientStop Offset="0.55" Color="Black" />
+          <GradientStop Offset="0.8" Color="#80000000" />
+          <GradientStop Offset="1" Color="Transparent" />
+        </LinearGradientBrush>
+      </Panel.OpacityMask>
+    </Panel>
+
+    <DockPanel Grid.Column="1" x:Name="Body" Margin="24,20,24,20">
+      <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,22,0,0">
+        <Button x:Name="SecondaryButton" Click="OnSecondary" Padding="16,7" CornerRadius="8" />
+        <Button x:Name="PrimaryButton" Classes="accent" Click="OnPrimary" IsDefault="True" />
+      </StackPanel>
+      <StackPanel Spacing="14" VerticalAlignment="Center">
+        <TextBlock x:Name="HeadingText" Classes="h2" TextWrapping="Wrap" />
+        <TextBlock x:Name="MessageText" TextWrapping="Wrap" Foreground="{DynamicResource EmmaMutedBrush}" />
+      </StackPanel>
+    </DockPanel>
+  </Grid>
 </Window>
