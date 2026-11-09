@@ -147,8 +147,49 @@ public sealed partial class FileActions : IFileActions
         }
         catch (IOException)
         {
-            Process.Start("xdg-open", [Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(path)) ?? path])?.Dispose();
+            RunLauncher("xdg-open", LauncherTimeout, Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(path)) ?? path);
         }
+    }
+
+    /// <summary>How long a launcher gets to report a failure before it counts as having opened the item.</summary>
+    internal static readonly TimeSpan LauncherTimeout = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// Runs a launcher such as xdg-open and reports its failure (a nonzero exit) as an IOException with
+    /// its error output. Unlike <see cref="Run"/>, it does not wait for the launched program: some
+    /// launchers stay until the program they started closes, and that program can inherit the output
+    /// pipes. So a launcher still running after <paramref name="timeout"/> counts as success, and the
+    /// error output is only read once the launcher has failed, for a moment at most.
+    /// </summary>
+    internal static void RunLauncher(string fileName, TimeSpan timeout, params string[] args)
+    {
+        Process? started;
+        try
+        {
+            started = Process.Start(new ProcessStartInfo(fileName, args)
+            {
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            });
+        }
+        catch (System.ComponentModel.Win32Exception ex)
+        {
+            throw new IOException($"Could not start {fileName}: {ex.Message}", ex);
+        }
+        using var process = started ?? throw new IOException($"Could not start {fileName}.");
+        var error = process.StandardError.ReadToEndAsync(); // drained as it runs, so a chatty launcher can't fill the pipe
+        if (!process.WaitForExit(timeout) || process.ExitCode == 0) return;
+        var message = "";
+        try
+        {
+            if (error.Wait(TimeSpan.FromSeconds(1))) message = error.Result.Trim();
+        }
+        catch (AggregateException)
+        {
+            // no error text to show; the exit code still says it failed
+        }
+        throw new IOException(message.Length == 0 ? $"{fileName} failed (exit code {process.ExitCode})." : message);
     }
 
     /// <summary>

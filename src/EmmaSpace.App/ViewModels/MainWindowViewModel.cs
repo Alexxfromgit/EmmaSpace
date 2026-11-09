@@ -94,9 +94,46 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
 
     /// <summary>
     /// True when the path box names the results on screen. The one scan button then reads "Rescan";
-    /// once another path is typed it reads "Analyze" again.
+    /// once another path is typed it reads "Analyze" again. Bindings read this, so it never asks the
+    /// disk itself: stray spaces around the results' path count as a typo unless the background check
+    /// (<see cref="CheckTypedFolder"/>) found a folder whose name keeps them.
     /// </summary>
-    public bool IsRescan => ResultsPath is { } results && ScanPaths.AreSame(PathText, results);
+    public bool IsRescan => ResultsPath is { } results && ScanPaths.Match(PathText, results) switch
+    {
+        TypedPathMatch.Same => true,
+        TypedPathMatch.SameIfTrimmed => !(_checkedText == PathText && _checkedTextExists),
+        _ => false,
+    };
+
+    // The last typed text checked on disk by CheckTypedFolder, and whether a folder of exactly that name exists.
+    private string? _checkedText;
+    private bool _checkedTextExists;
+
+    partial void OnPathTextChanged(string value) => CheckTypedFolder();
+
+    partial void OnTreeChanged(FileTree? value) => CheckTypedFolder();
+
+    /// <summary>
+    /// When the path box holds the results' path with stray spaces, checks in the background whether a
+    /// folder keeps those spaces in its name (legal on macOS and Linux), then updates the scan button.
+    /// </summary>
+    private void CheckTypedFolder()
+    {
+        var text = PathText;
+        if (ResultsPath is not { } results || ScanPaths.Match(text, results) != TypedPathMatch.SameIfTrimmed) return;
+        _ = CheckTypedFolderAsync(text);
+    }
+
+    private async Task CheckTypedFolderAsync(string text)
+    {
+        var exists = await Task.Run(() => Directory.Exists(text));
+        if (PathText != text) return; // typed on meanwhile; the new text has its own check
+        _checkedText = text;
+        _checkedTextExists = exists;
+        OnPropertyChanged(nameof(IsRescan));
+        OnPropertyChanged(nameof(ScanLabel));
+        OnPropertyChanged(nameof(ScanTip));
+    }
 
     public string ScanLabel => IsRescan ? "Rescan" : "Analyze";
 
@@ -174,10 +211,31 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
     private bool CanScan() => !IsScanning;
 
     [RelayCommand(CanExecute = nameof(CanScan))]
-    private Task ScanAsync() => string.IsNullOrWhiteSpace(PathText) ? BrowseAsync() : ScanPathAsync(TypedPath(PathText));
+    private async Task ScanAsync()
+    {
+        var text = PathText;
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            await BrowseAsync();
+            return;
+        }
+        var results = ResultsPath;
+        var match = results is null ? TypedPathMatch.Different : ScanPaths.Match(text, results);
+        // Rescanning reads the results' own path exactly as it was scanned, so a folder that is gone is
+        // reported as gone instead of quietly scanning a look-alike (e.g. "reports" for "reports ").
+        if (match == TypedPathMatch.Same)
+        {
+            await ScanPathAsync(results!);
+            return;
+        }
+        // Whether stray spaces are part of a folder's name is a question for the disk, which can be slow
+        // to answer for a network share, so it is asked off the UI thread.
+        var path = await Task.Run(() => TypedPath(text));
+        await ScanPathAsync(match == TypedPathMatch.SameIfTrimmed && path != text ? results! : path);
+    }
 
     // Stray spaces around typed text are dropped, unless the folder's name really has them
-    // (legal on macOS and Linux). ScanPaths.AreSame applies the same rule to the button label.
+    // (legal on macOS and Linux). IsRescan applies the same rule to the button label.
     private static string TypedPath(string text) => ScanPaths.FromTyped(text);
 
     private bool CanRescan() => !IsScanning && Tree is not null;

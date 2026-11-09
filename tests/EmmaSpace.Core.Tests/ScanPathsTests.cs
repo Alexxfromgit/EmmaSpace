@@ -25,6 +25,28 @@ public class ScanPathsTests
     }
 
     [Fact]
+    public void Matching_from_the_text_alone_leaves_stray_spaces_for_the_disk_to_decide()
+    {
+        Assert.Equal(TypedPathMatch.Same, ScanPaths.Match(Root, Root));
+        Assert.Equal(TypedPathMatch.Same, ScanPaths.Match(Root + Path.DirectorySeparatorChar, Root));
+        Assert.Equal(TypedPathMatch.Different, ScanPaths.Match(Path.Combine(Root, "child"), Root));
+        Assert.Equal(TypedPathMatch.Different, ScanPaths.Match("  ", Root));
+        Assert.Equal(TypedPathMatch.Different, ScanPaths.Match(null, Root));
+        // Windows drops a trailing space from a full path itself, so only a leading one is left to the disk there.
+        Assert.Equal(TypedPathMatch.SameIfTrimmed, ScanPaths.Match("  " + Root, Root));
+    }
+
+    [Fact]
+    public void A_results_path_that_ends_in_a_space_matches_itself_exactly()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "Windows drops trailing spaces from names itself.");
+        // Rescanning reads this path as it is, so a folder that is gone is never swapped for a look-alike.
+        Assert.Equal(TypedPathMatch.Same, ScanPaths.Match("/data/reports ", "/data/reports "));
+        Assert.Equal(TypedPathMatch.SameIfTrimmed, ScanPaths.Match("/data/reports ", "/data/reports"));
+        Assert.Equal(TypedPathMatch.Different, ScanPaths.Match("/data/reports", "/data/reports "));
+    }
+
+    [Fact]
     public void Case_matters_only_on_linux()
     {
         Assert.Equal(!OperatingSystem.IsLinux(), ScanPaths.AreSame(Root.ToUpperInvariant(), Root.ToLowerInvariant()));
