@@ -2,13 +2,16 @@
 """Generates src/EmmaSpace.App/Assets/emmaspace.icns from branding/emmaspace-icon.png.
 
 The art sits in an 824 px rounded square on a 1024 px canvas, the grid that macOS app icons use, so
-Emma Space lines up with the other icons in the Dock and Finder. macOS only (needs iconutil) and
-Pillow (pip install pillow). The result is committed, so CI does not run this.
+Emma Space lines up with the other icons in the Dock and Finder. Needs Pillow (pip install pillow).
+On macOS it packs the icon with iconutil; elsewhere Pillow writes the file itself, with every size
+except the non-Retina 16 and 32 px entries, which macOS then scales down from the larger ones.
+The result is committed, so CI does not run this.
 
 Usage: python3 build/make-icns.py [--source PATH]
 """
 import argparse
 import pathlib
+import shutil
 import subprocess
 import tempfile
 
@@ -39,6 +42,11 @@ def main() -> None:
 
     image = master(args.source)
     out = ROOT / "src" / "EmmaSpace.App" / "Assets" / "emmaspace.icns"
+    if shutil.which("iconutil") is None:
+        sizes = (32, 64, 128, 256, 512)  # plus the 1024 px master itself
+        image.save(out, "ICNS", append_images=[image.resize((px, px), Image.Resampling.LANCZOS) for px in sizes])
+        print(f"Wrote {out} (Pillow, iconutil not found)")
+        return
     with tempfile.TemporaryDirectory() as tmp:
         iconset = pathlib.Path(tmp) / "emmaspace.iconset"
         iconset.mkdir()

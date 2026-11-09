@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="branding/emmaspace-social-preview.jpg" alt="Emma Space: disk space analyzer" width="100%">
+  <img src="branding/emmaspace-readme.jpg" alt="Emma Space: disk space analyzer" width="100%">
 </p>
 
 # <img src="src/EmmaSpace.App/Assets/emmaspace.png" alt="" width="36" align="top"> Emma Space
@@ -158,7 +158,7 @@ src/EmmaSpace.Core/   Interop, Model, Scanning, Analysis, Snapshots, Export, Pla
 src/EmmaSpace.App/    App, Views, ViewModels, Controls (treemap, donut, share bar), Services
 tests/                xUnit v3 tests (Microsoft.Testing.Platform)
 build/                Native.targets (CMake from MSBuild), make-icon.ps1, make-icns.py, stage-release.py
-branding/             icon source art (make-icon.ps1 builds the .ico from it), README/social preview
+branding/             icon source art (make-icon.ps1 and make-icns.py build the app icons from it), README banner
 ```
 
 ## Roadmap
