@@ -439,7 +439,16 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
     {
         if (IsScanning) return;
         var path = await _dialogs.OpenFileAsync("Open snapshot", "Emma Space snapshot", SnapshotFile.Extension);
-        if (path is null) return;
+        if (path is not null) await OpenSnapshotFileAsync(path);
+    }
+
+    /// <summary>
+    /// Shows a saved snapshot, e.g. one the user double-clicked in Explorer, Finder or a Linux file
+    /// manager. Ignored while a scan runs.
+    /// </summary>
+    public async Task OpenSnapshotFileAsync(string path)
+    {
+        if (IsScanning) return;
         try
         {
             SetTree(await SnapshotFile.LoadAsync(path));

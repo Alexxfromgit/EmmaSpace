@@ -14,6 +14,9 @@ namespace EmmaSpace.Core.Snapshots;
 public static class SnapshotFile
 {
     public const string Extension = ".emmasnap";
+
+    /// <summary>How every snapshot file starts, whatever its format version (used to recognize the file type).</summary>
+    public const string MagicPrefix = "EMSNAP";
     private static ReadOnlySpan<byte> Magic => "EMSNAP01"u8;
     private const int FormatVersion = 1;
 

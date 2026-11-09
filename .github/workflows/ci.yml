@@ -92,6 +92,32 @@ jobs:
         if: matrix.test
         run: dotnet test --project tests/EmmaSpace.Core.Tests -c Release -p:EmmaSkipNative=true --no-build
 
+      # Releases pack macOS from a ready .app with Emma Space's own Info.plist (build/bundle-macos.ps1), which
+      # declares .emmasnap documents. Check that bundle, that Velopack packs it (unsigned), and that the packed
+      # app still has the document type and its icon.
+      - name: Package check (macOS)
+        if: runner.os == 'macOS'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          dotnet tool restore
+          dotnet publish src/EmmaSpace.App -c Release -r osx-arm64 --self-contained -p:EmmaSkipNative=true `
+            -p:EmmaNativePreset=osx -p:DebugType=None -p:CopyDebugSymbolFilesFromPackages=false -o artifacts/pack-input/osx-arm64
+          $app = pwsh build/bundle-macos.ps1 -Version 0.0.1 -PackDir artifacts/pack-input/osx-arm64 -Runtime osx-arm64 `
+                   -OutDir artifacts/bundle | Select-Object -Last 1
+          plutil -lint "$app/Contents/Info.plist"
+          dotnet vpk pack --packId EmmaSpace --packVersion 0.0.1 --packDir $app --mainExe EmmaSpace --packTitle 'Emma Space' `
+            --icon src/EmmaSpace.App/Assets/emmaspace.icns --runtime osx-arm64 --channel osx-arm64 --outputDir artifacts/releases/osx-arm64
+          $zip = Get-ChildItem artifacts/releases/osx-arm64 -Filter '*Portable.zip' | Select-Object -First 1
+          ditto -x -k $zip.FullName artifacts/portable
+          $packed = (Get-ChildItem artifacts/portable -Filter '*.app' -Directory | Select-Object -First 1).FullName
+          $icon = plutil -extract CFBundleDocumentTypes.0.CFBundleTypeIconFile raw "$packed/Contents/Info.plist"
+          $id = plutil -extract CFBundleIdentifier raw "$packed/Contents/Info.plist"
+          if ($icon -ne 'emmasnap.icns' -or $id -ne 'com.alexxfromgit.emmaspace') { throw "Unexpected Info.plist: icon '$icon', id '$id'" }
+          if (-not (Test-Path "$packed/Contents/Resources/emmasnap.icns")) { throw 'emmasnap.icns is missing from the packed app' }
+          Write-Host "Packed $packed declares .emmasnap documents with their icon"
+
       # CI builds are versioned below the next release: <current version>-ci.<run number>.
       - name: CI version
         if: runner.os == 'Windows'

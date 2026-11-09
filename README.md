@@ -48,7 +48,7 @@ right-click → Open the first time.
 | Largest files | Top 1,000 files |
 | Duplicates | Same size → hash of head and tail → full hash (xxHash128); only candidates are read |
 | Clean-up | Files not modified/opened for 6 months–5 years; empty folder trees |
-| Snapshots | Save a scan (`.emmasnap`, Brotli) and compare it later: what grew, shrank, appeared or vanished |
+| Snapshots | Save a scan (`.emmasnap`, Brotli) and compare it later: what grew, shrank, appeared or vanished. Snapshot files have their own icon and open in Emma Space with a double-click (registered by the Windows installer, the macOS app bundle, and on Linux when the AppImage first runs) |
 | Export | Self-contained HTML report; CSV of folders or of every file |
 | Actions | Open, show in Explorer/Finder, copy path, Properties (Windows), move to Recycle Bin / Trash (asks first; on Windows the shell warns before anything would be deleted permanently; on macOS Finder's "Put Back" works) |
 

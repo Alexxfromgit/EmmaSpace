@@ -1,6 +1,8 @@
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
+using Avalonia.Platform.Storage;
+using Avalonia.Threading;
 using EmmaSpace.App.Services;
 using EmmaSpace.App.ViewModels;
 using EmmaSpace.App.Views;
@@ -32,10 +34,27 @@ public partial class App : Application
             };
             if (ElevationService.StartupScanPath(desktop.Args) is { } path)
                 window.Opened += (_, _) => viewModel.StartScan(path);
+            else if (SnapshotFileType.FindInArguments(desktop.Args) is { } snapshot)
+                window.Opened += (_, _) => _ = viewModel.OpenSnapshotFileAsync(snapshot); // double-clicked on Windows or Linux
+            OpenSnapshotsFromFinder(viewModel);
             window.Opened += (_, _) => _ = viewModel.Updates.CheckOnStartupAsync();
+            window.Opened += (_, _) => DesktopIntegration.StartOnLinux();
         }
 
         base.OnFrameworkInitializationCompleted();
+    }
+
+    // macOS hands a double-clicked document to the running app as an "open files" event, both at
+    // launch and while it runs, instead of on the command line.
+    private void OpenSnapshotsFromFinder(MainWindowViewModel viewModel)
+    {
+        if (this.TryGetFeature<IActivatableLifetime>() is not { } activatable) return;
+        activatable.Activated += (_, e) =>
+        {
+            if (e is not FileActivatedEventArgs files) return;
+            var snapshot = files.Files.Select(f => f.TryGetLocalPath()).FirstOrDefault(SnapshotFileType.IsSnapshot);
+            if (snapshot is not null) Dispatcher.UIThread.Post(() => _ = viewModel.OpenSnapshotFileAsync(snapshot));
+        };
     }
 
     private static ServiceProvider ConfigureServices(MainWindow window)

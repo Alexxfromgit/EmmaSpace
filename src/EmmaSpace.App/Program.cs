@@ -1,4 +1,5 @@
 using Avalonia;
+using EmmaSpace.Core.Platform;
 using Velopack;
 
 namespace EmmaSpace.App;
@@ -9,8 +10,25 @@ internal static class Program
     public static void Main(string[] args)
     {
         // Must run first: handles install/update/uninstall hooks when started by the Velopack installer.
-        VelopackApp.Build().Run();
+        // On Windows the hooks register .emmasnap files to open here with their own icon (installed next
+        // to the exe); the app folder ("current") stays the same across updates.
+        var velopack = VelopackApp.Build();
+        if (OperatingSystem.IsWindows()) velopack = WithSnapshotFileHooks(velopack);
+        velopack.Run();
         BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+    }
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static VelopackApp WithSnapshotFileHooks(VelopackApp velopack) => velopack
+        .OnAfterInstallFastCallback(_ => RegisterSnapshotFiles())
+        .OnAfterUpdateFastCallback(_ => RegisterSnapshotFiles())
+        .OnBeforeUninstallFastCallback(_ => SnapshotFileType.UnregisterOnWindows());
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static void RegisterSnapshotFiles()
+    {
+        if (Environment.ProcessPath is { } exe)
+            SnapshotFileType.RegisterOnWindows(exe, Path.Combine(AppContext.BaseDirectory, "emmasnap.ico"));
     }
 
     // Also used by the visual designer.

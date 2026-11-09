@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Info.plist of Emma Space.app; build/bundle-macos.ps1 fills in @VERSION@. Besides what Velopack
+     would generate, it declares .emmasnap snapshots, so Finder shows them with emmasnap.icns and opens
+     them in Emma Space. -->
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key>
+  <string>Emma Space</string>
+  <key>CFBundleDisplayName</key>
+  <string>Emma Space</string>
+  <key>CFBundleIdentifier</key>
+  <string>com.alexxfromgit.emmaspace</string>
+  <key>CFBundleVersion</key>
+  <string>@VERSION@</string>
+  <key>CFBundleShortVersionString</key>
+  <string>@VERSION@</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleSignature</key>
+  <string>????</string>
+  <key>CFBundleExecutable</key>
+  <string>EmmaSpace</string>
+  <key>CFBundleIconFile</key>
+  <string>emmaspace.icns</string>
+  <key>NSPrincipalClass</key>
+  <string>NSApplication</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>Emma Space snapshot</string>
+      <key>CFBundleTypeRole</key>
+      <string>Viewer</string>
+      <key>LSHandlerRank</key>
+      <string>Owner</string>
+      <key>CFBundleTypeIconFile</key>
+      <string>emmasnap.icns</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>com.alexxfromgit.emmaspace.snapshot</string>
+      </array>
+    </dict>
+  </array>
+  <key>UTExportedTypeDeclarations</key>
+  <array>
+    <dict>
+      <key>UTTypeIdentifier</key>
+      <string>com.alexxfromgit.emmaspace.snapshot</string>
+      <key>UTTypeDescription</key>
+      <string>Emma Space snapshot</string>
+      <key>UTTypeConformsTo</key>
+      <array>
+        <string>public.data</string>
+      </array>
+      <key>UTTypeIconFile</key>
+      <string>emmasnap.icns</string>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key>
+        <array>
+          <string>emmasnap</string>
+        </array>
+        <key>public.mime-type</key>
+        <array>
+          <string>application/x-emmaspace-snapshot</string>
+        </array>
+      </dict>
+    </dict>
+  </array>
+</dict>
+</plist>
