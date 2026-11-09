@@ -20,7 +20,7 @@ internal static class Program
         // open it, instead of starting a second one. (macOS sends it to the running app by itself.)
         if (!OperatingSystem.IsMacOS() && Services.ElevationService.StartupScanPath(args) is null &&
             SnapshotFileType.FindInArguments(args) is { } snapshot &&
-            SnapshotHandoff.TrySend(Path.GetFullPath(snapshot), TimeSpan.FromMilliseconds(500)))
+            SnapshotHandoff.TrySend(Path.GetFullPath(snapshot), TimeSpan.FromMilliseconds(150)))
             return;
 
         BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);

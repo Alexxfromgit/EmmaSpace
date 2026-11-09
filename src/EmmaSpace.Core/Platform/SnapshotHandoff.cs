@@ -17,13 +17,19 @@ public static partial class SnapshotHandoff
     private const int MaxPathBytes = 64 * 1024;
     private static readonly TimeSpan ExchangeTimeout = TimeSpan.FromSeconds(5);
 
-    /// <summary>One name per user and session, so other users' instances never see each other.</summary>
-    public static string DefaultPipeName { get; } =
-        $"EmmaSpace.Snapshots.{Sanitize(Environment.UserName)}.{Process.GetCurrentProcess().SessionId}";
+    /// <summary>
+    /// One name per user, plus the session on Windows (several users can be signed in at once). On
+    /// Linux the process "session" differs between apps started from the dock, a terminal or the file
+    /// manager, so it isn't part of the name there; the socket only accepts the same user anyway.
+    /// </summary>
+    public static string DefaultPipeName { get; } = OperatingSystem.IsWindows()
+        ? $"EmmaSpace.Snapshots.{Sanitize(Environment.UserName)}.{Process.GetCurrentProcess().SessionId}"
+        : $"EmmaSpace.Snapshots.{Sanitize(Environment.UserName)}";
 
     /// <summary>
     /// Sends <paramref name="snapshotPath"/> to a running Emma Space. True once that app has accepted it;
     /// false if none is listening (found within <paramref name="connectTimeout"/>) or it didn't answer.
+    /// A running app always has the pipe waiting, so a short timeout is enough.
     /// </summary>
     public static bool TrySend(string snapshotPath, TimeSpan connectTimeout, string? pipeName = null)
     {
@@ -56,16 +62,35 @@ public static partial class SnapshotHandoff
 
     /// <summary>
     /// Starts accepting snapshots from new processes; <paramref name="received"/> runs on a background
-    /// thread. Null if the pipe can't be created (e.g. on Linux another Emma Space already listens).
+    /// thread. Null if the pipe can't be created, or (outside Windows, where only one process can own
+    /// the socket) if another Emma Space of this user already listens.
     /// </summary>
     public static IDisposable? Listen(Action<string> received, string? pipeName = null)
     {
-        var listener = new Listener(pipeName ?? DefaultPipeName, received);
+        pipeName ??= DefaultPipeName;
+        if (!OperatingSystem.IsWindows() && IsListening(pipeName)) return null;
+        var listener = new Listener(pipeName, received);
         return listener.Start() ? listener : null;
+    }
+
+    // Outside Windows a new server replaces the socket of an existing one, so don't start a second.
+    private static bool IsListening(string pipeName)
+    {
+        try
+        {
+            using var probe = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.CurrentUserOnly);
+            probe.Connect(TimeSpan.FromMilliseconds(100));
+            return true;
+        }
+        catch (Exception ex) when (ex is TimeoutException or IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
     }
 
     private sealed class Listener(string pipeName, Action<string> received) : IDisposable
     {
+        private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(5);
         private readonly CancellationTokenSource _stop = new();
         private NamedPipeServerStream? _first;
 
@@ -87,38 +112,75 @@ public static partial class SnapshotHandoff
         private NamedPipeServerStream Create() => new(pipeName, PipeDirection.InOut, NamedPipeServerStream.MaxAllowedServerInstances,
             PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
 
+        private NamedPipeServerStream? TryCreate()
+        {
+            try
+            {
+                return Create();
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                Trace.WriteLine($"[handoff] {ex.Message}");
+                return null;
+            }
+        }
+
+        // One instance always waits for the next client: it is created before the current client is
+        // served, so a double-click finds the pipe at once (and on Linux the socket stays bound).
         private async Task LoopAsync()
         {
-            while (!_stop.IsCancellationRequested)
+            var waiting = Interlocked.Exchange(ref _first, null);
+            var backoff = TimeSpan.FromMilliseconds(250);
+            try
             {
-                NamedPipeServerStream? pipe = null;
-                try
+                while (!_stop.IsCancellationRequested)
                 {
-                    pipe = Interlocked.Exchange(ref _first, null) ?? Create();
-                    await pipe.WaitForConnectionAsync(_stop.Token);
-                    if (await ReceiveAsync(pipe) is { } path) received(path);
-                }
-                catch (OperationCanceledException) when (_stop.IsCancellationRequested)
-                {
-                    break;
-                }
-                catch (Exception ex) when (ex is IOException or OperationCanceledException or ObjectDisposedException or UnauthorizedAccessException)
-                {
-                    // A client that went away or sent garbage, or the pipe couldn't be made: try again shortly.
-                    Trace.WriteLine($"[handoff] {ex.Message}");
+                    waiting ??= TryCreate();
+                    if (waiting is null)
+                    {
+                        await Task.Delay(backoff, _stop.Token);
+                        backoff = TimeSpan.FromTicks(Math.Min(backoff.Ticks * 2, MaxBackoff.Ticks));
+                        continue;
+                    }
+                    backoff = TimeSpan.FromMilliseconds(250);
+
+                    var pipe = waiting;
+                    waiting = null;
                     try
                     {
-                        await Task.Delay(TimeSpan.FromMilliseconds(250), _stop.Token);
+                        await pipe.WaitForConnectionAsync(_stop.Token);
+                        waiting = TryCreate();
+                        if (await ReceiveAsync(pipe) is { } path) Deliver(path);
                     }
-                    catch (OperationCanceledException)
+                    catch (Exception ex) when (ex is IOException or ObjectDisposedException or UnauthorizedAccessException ||
+                                               ex is OperationCanceledException && !_stop.IsCancellationRequested)
                     {
-                        break;
+                        Trace.WriteLine($"[handoff] {ex.Message}"); // a client that went away or sent garbage
+                    }
+                    finally
+                    {
+                        await pipe.DisposeAsync();
                     }
                 }
-                finally
-                {
-                    if (pipe is not null) await pipe.DisposeAsync();
-                }
+            }
+            catch (OperationCanceledException) when (_stop.IsCancellationRequested)
+            {
+            }
+            finally
+            {
+                if (waiting is not null) await waiting.DisposeAsync();
+            }
+        }
+
+        private void Deliver(string path)
+        {
+            try
+            {
+                received(path);
+            }
+            catch (Exception ex)
+            {
+                Trace.WriteLine($"[handoff] handler failed: {ex}"); // never stop listening because of one file
             }
         }
 

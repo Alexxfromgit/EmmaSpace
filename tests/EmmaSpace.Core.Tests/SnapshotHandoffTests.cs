@@ -36,7 +36,7 @@ public class SnapshotHandoffTests
     public void Without_a_running_app_the_new_process_gives_up_quickly()
     {
         var stopwatch = Stopwatch.StartNew();
-        Assert.False(SnapshotHandoff.TrySend("/tmp/a.emmasnap", TimeSpan.FromMilliseconds(300), TestPipe()));
+        Assert.False(SnapshotHandoff.TrySend("/tmp/a.emmasnap", TimeSpan.FromMilliseconds(150), TestPipe()));
         Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(3), $"took {stopwatch.Elapsed}");
     }
 
@@ -47,7 +47,7 @@ public class SnapshotHandoffTests
         var listener = SnapshotHandoff.Listen(_ => { }, pipe);
         Assert.NotNull(listener);
         listener.Dispose();
-        Assert.False(SnapshotHandoff.TrySend("/tmp/a.emmasnap", TimeSpan.FromMilliseconds(300), pipe));
+        Assert.False(SnapshotHandoff.TrySend("/tmp/a.emmasnap", TimeSpan.FromMilliseconds(150), pipe));
     }
 
     [Fact]
@@ -65,6 +65,17 @@ public class SnapshotHandoffTests
 
             File.WriteAllText(file, "not a snapshot");
             Assert.Null(SnapshotFile.TryReadSummary(file));
+
+            // A damaged root path length (an invalid 7-bit count, then one claiming ~2 GB) is reported as
+            // a corrupt file, never as an unexpected exception or a huge read.
+            byte[][] damaged = [[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x01], [0xFF, 0xFF, 0xFF, 0xFF, 0x07]];
+            foreach (var length in damaged)
+            {
+                File.WriteAllBytes(file, [.. "EMSNAP01"u8, .. BitConverter.GetBytes(1), .. length, .. new byte[64]]);
+                Assert.Null(SnapshotFile.TryReadSummary(file));
+                using var stream = File.OpenRead(file);
+                Assert.Throws<InvalidDataException>(() => SnapshotFile.Load(stream));
+            }
             Assert.Null(SnapshotFile.TryReadSummary(file + ".missing"));
         }
         finally

@@ -461,7 +461,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
                     $"Emma Space is scanning. Open \"{name}\" again once the scan has finished or been cancelled.");
                 return;
             }
-            var about = SnapshotFile.TryReadSummary(path) is var (root, taken)
+            // Off the UI thread: the file may sit on a sleeping disk or a slow share.
+            var about = await Task.Run(() => SnapshotFile.TryReadSummary(path)) is var (root, taken)
                 ? $"\n\nIt is a snapshot of {root}, taken {taken.ToString("g", CultureInfo.CurrentCulture)}."
                 : "";
             var replaces = Tree is null ? "" : $"\n\nIt replaces the results on screen ({Tree.RootPath}).";

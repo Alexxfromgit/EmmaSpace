@@ -87,14 +87,36 @@ public static class SnapshotFile
             using var input = File.OpenRead(path);
             using var reader = new BinaryReader(input, Encoding.UTF8);
             if (!reader.ReadBytes(Magic.Length).AsSpan().SequenceEqual(Magic) || reader.ReadInt32() != FormatVersion) return null;
-            var rootPath = reader.ReadString();
+            var rootPath = ReadRootPath(reader);
             var scannedAtMs = reader.ReadInt64();
             return UnixTime.IsValid(scannedAtMs) ? (rootPath, DateTimeOffset.FromUnixTimeMilliseconds(scannedAtMs).ToLocalTime()) : null;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException)
         {
-            return null;
+            return null; // IOException includes EndOfStreamException (a truncated file)
         }
+    }
+
+    /// <summary>
+    /// The root path as BinaryWriter.Write(string) stored it (a 7-bit encoded byte count, then UTF-8),
+    /// with the count checked first, so a damaged or hostile header can't ask for gigabytes.
+    /// </summary>
+    private static string ReadRootPath(BinaryReader reader)
+    {
+        int bytes;
+        try
+        {
+            bytes = reader.Read7BitEncodedInt();
+        }
+        catch (FormatException)
+        {
+            throw new InvalidDataException("Snapshot header is corrupt.");
+        }
+        // UTF-8 needs at most 3 bytes per UTF-16 unit.
+        if (bytes < 0 || bytes > MaxRootNameChars * 3) throw new InvalidDataException("Snapshot header is corrupt.");
+        var utf8 = reader.ReadBytes(bytes);
+        if (utf8.Length != bytes) throw new EndOfStreamException();
+        return Encoding.UTF8.GetString(utf8);
     }
 
     public static FileTree Load(Stream input)
@@ -106,7 +128,7 @@ public static class SnapshotFile
         var version = reader.ReadInt32();
         if (version != FormatVersion) throw new InvalidDataException($"Unsupported snapshot version {version}.");
 
-        var rootPath = reader.ReadString();
+        var rootPath = ReadRootPath(reader);
         var scannedAtMs = reader.ReadInt64();
         var elapsedMs = reader.ReadInt64();
         if (!UnixTime.IsValid(scannedAtMs) || elapsedMs < 0 || elapsedMs > (long)TimeSpan.MaxValue.TotalMilliseconds)
