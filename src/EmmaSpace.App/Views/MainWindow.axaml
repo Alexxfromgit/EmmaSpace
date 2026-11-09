@@ -17,7 +17,7 @@
         <Template>
           <ContextMenu x:DataType="vm:NodeItemViewModel">
             <MenuItem Header="Open" Command="{Binding OpenCommand}" />
-            <MenuItem Header="Show in folder" Command="{Binding RevealCommand}" />
+            <MenuItem Header="{x:Static vm:NodeItemViewModel.RevealHeader}" Command="{Binding RevealCommand}" />
             <MenuItem Header="Copy path" Command="{Binding CopyPathCommand}" />
             <Separator />
             <MenuItem Header="Show in tree" Command="{Binding ShowInTreeCommand}" />
@@ -56,7 +56,9 @@
           <Button Grid.Column="1" Content="Browse…" Command="{Binding BrowseCommand}" Margin="8,0,0,0" CornerRadius="8"
                   Padding="14,7" IsEnabled="{Binding !IsScanning}" />
           <Panel Grid.Column="2" Margin="8,0,0,0">
-            <Button Classes="accent" Content="Analyze" Command="{Binding ScanCommand}" IsVisible="{Binding !IsScanning}" />
+            <!-- One scan button: "Rescan" while the box names the results on screen, "Analyze" otherwise. -->
+            <Button Classes="accent" Content="{Binding ScanLabel}" Command="{Binding ScanCommand}" IsVisible="{Binding !IsScanning}"
+                    ToolTip.Tip="{Binding ScanTip}" MinWidth="92" />
             <Button Content="Cancel" Command="{Binding CancelScanCommand}" IsVisible="{Binding IsScanning}" CornerRadius="8" Padding="16,7" />
           </Panel>
           <Button Grid.Column="3" Classes="subtle" Content="⚡ Fast scan" Command="{Binding FastScanCommand}" Margin="4,0,0,0"
@@ -65,7 +67,6 @@
         </Grid>
 
         <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="2" IsVisible="{Binding HasTree}">
-          <Button Classes="subtle" Content="Rescan" Command="{Binding RescanCommand}" />
           <DropDownButton Classes="subtle" Content="Snapshot">
             <DropDownButton.Flyout>
               <MenuFlyout Placement="BottomEdgeAlignedRight">
@@ -117,11 +118,12 @@
         <TextBlock Text="{Binding TotalText}" Classes="caption" VerticalAlignment="Center" />
         <TextBlock Grid.Column="1" Text="{Binding HoverText}" Classes="caption" Margin="24,0" TextTrimming="PathSegmentEllipsis"
                    HorizontalAlignment="Center" VerticalAlignment="Center" />
+        <!-- The version button is taller than a caption line, so the captions are centred next to it. -->
         <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6">
-          <TextBlock Text="{Binding ScanInfoText}" Classes="caption" />
-          <TextBlock Text="·" Classes="caption" IsVisible="{Binding HasTree}" />
-          <TextBlock Text="{Binding EngineText}" Classes="caption" />
-          <TextBlock Text="·" Classes="caption" />
+          <TextBlock Text="{Binding ScanInfoText}" Classes="caption" VerticalAlignment="Center" />
+          <TextBlock Text="·" Classes="caption" VerticalAlignment="Center" IsVisible="{Binding HasTree}" />
+          <TextBlock Text="{Binding EngineText}" Classes="caption" VerticalAlignment="Center" />
+          <TextBlock Text="·" Classes="caption" VerticalAlignment="Center" />
           <DropDownButton Classes="subtle" Content="{Binding Updates.VersionText}" Padding="4,0" FontSize="12"
                           VerticalAlignment="Center" ToolTip.Tip="Version and updates">
             <DropDownButton.Flyout>
@@ -153,9 +155,9 @@
             </ItemsControl.ItemsPanel>
             <ItemsControl.ItemTemplate>
               <DataTemplate x:DataType="vm:DriveViewModel">
-                <Button Width="300" Margin="0,0,14,14" Padding="0" Background="Transparent" BorderThickness="0"
+                <Button Classes="card" Width="300" Margin="0,0,14,14" AutomationProperties.Name="{Binding Title}"
                         Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).ScanDriveCommand}"
-                        CommandParameter="{Binding}" HorizontalContentAlignment="Stretch">
+                        CommandParameter="{Binding}">
                   <Border Classes="card" Padding="18,16">
                     <StackPanel Spacing="6">
                       <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="14.5" TextTrimming="CharacterEllipsis" />

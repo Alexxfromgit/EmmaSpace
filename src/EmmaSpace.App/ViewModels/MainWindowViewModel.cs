@@ -72,7 +72,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
     public bool CanShowProperties => _fileActions.CanShowProperties;
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(HasTree), nameof(IsHome), nameof(WindowTitle))]
+    [NotifyPropertyChangedFor(nameof(HasTree), nameof(IsHome), nameof(WindowTitle), nameof(IsRescan), nameof(ScanLabel), nameof(ScanTip))]
+    [NotifyCanExecuteChangedFor(nameof(RescanCommand))]
     public partial FileTree? Tree { get; private set; }
 
     [ObservableProperty]
@@ -85,7 +86,62 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
     public string WindowTitle => Tree is null ? "Emma Space" : $"Emma Space — {Tree.RootPath}";
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsRescan), nameof(ScanLabel), nameof(ScanTip))]
     public partial string PathText { get; set; }
+
+    /// <summary>What a rescan reads: the scanned folder, or for a snapshot the folder it was taken of.</summary>
+    private string? ResultsPath => Tree is null ? null : Tree.Info.Source == ScanSource.Snapshot ? Tree.Info.RootPath : Tree.RootPath;
+
+    /// <summary>
+    /// True when the path box names the results on screen. The one scan button then reads "Rescan";
+    /// once another path is typed it reads "Analyze" again. Bindings read this, so it never asks the
+    /// disk itself: stray spaces around the results' path count as a typo unless the background check
+    /// (<see cref="CheckTypedFolder"/>) found a folder whose name keeps them.
+    /// </summary>
+    public bool IsRescan => ResultsPath is { } results && ScanPaths.Match(PathText, results) switch
+    {
+        TypedPathMatch.Same => true,
+        TypedPathMatch.SameIfTrimmed => !(_checkedText == PathText && _checkedTextExists),
+        _ => false,
+    };
+
+    // The last typed text checked on disk by CheckTypedFolder, and whether a folder of exactly that name exists.
+    private string? _checkedText;
+    private bool _checkedTextExists;
+
+    partial void OnPathTextChanged(string value) => CheckTypedFolder();
+
+    partial void OnTreeChanged(FileTree? value) => CheckTypedFolder();
+
+    /// <summary>
+    /// When the path box holds the results' path with stray spaces, checks in the background whether a
+    /// folder keeps those spaces in its name (legal on macOS and Linux), then updates the scan button.
+    /// </summary>
+    private void CheckTypedFolder()
+    {
+        var text = PathText;
+        if (ResultsPath is not { } results || ScanPaths.Match(text, results) != TypedPathMatch.SameIfTrimmed) return;
+        _ = CheckTypedFolderAsync(text);
+    }
+
+    private async Task CheckTypedFolderAsync(string text)
+    {
+        var exists = await Task.Run(() => Directory.Exists(text));
+        if (PathText != text) return; // typed on meanwhile; the new text has its own check
+        _checkedText = text;
+        _checkedTextExists = exists;
+        OnPropertyChanged(nameof(IsRescan));
+        OnPropertyChanged(nameof(ScanLabel));
+        OnPropertyChanged(nameof(ScanTip));
+    }
+
+    public string ScanLabel => IsRescan ? "Rescan" : "Analyze";
+
+    public static string RescanShortcut { get; } = OperatingSystem.IsMacOS() ? "⌘R" : "F5";
+
+    public string ScanTip => IsRescan
+        ? $"Scan {ResultsPath} again to see its current state ({RescanShortcut})"
+        : "Map the drive or folder in the box (Enter)";
 
     /// <summary>Bumped whenever the tree changes in place, so the treemap re-lays itself out.</summary>
     [ObservableProperty]
@@ -155,17 +211,42 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
     private bool CanScan() => !IsScanning;
 
     [RelayCommand(CanExecute = nameof(CanScan))]
-    private Task ScanAsync() => string.IsNullOrWhiteSpace(PathText) ? BrowseAsync() : ScanPathAsync(TypedPath(PathText));
+    private async Task ScanAsync()
+    {
+        var text = PathText;
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            await BrowseAsync();
+            return;
+        }
+        var results = ResultsPath;
+        var match = results is null ? TypedPathMatch.Different : ScanPaths.Match(text, results);
+        // Rescanning reads the results' own path exactly as it was scanned, so a folder that is gone is
+        // reported as gone instead of quietly scanning a look-alike (e.g. "reports" for "reports ").
+        if (match == TypedPathMatch.Same)
+        {
+            await ScanPathAsync(results!);
+            return;
+        }
+        // Whether stray spaces are part of a folder's name is a question for the disk, which can be slow
+        // to answer for a network share, so it is asked off the UI thread.
+        var path = await Task.Run(() => TypedPath(text));
+        await ScanPathAsync(match == TypedPathMatch.SameIfTrimmed && path != text ? results! : path);
+    }
 
     // Stray spaces around typed text are dropped, unless the folder's name really has them
-    // (legal on macOS and Linux).
-    private static string TypedPath(string text) => Directory.Exists(text) ? text : text.Trim();
+    // (legal on macOS and Linux). IsRescan applies the same rule to the button label.
+    private static string TypedPath(string text) => ScanPaths.FromTyped(text);
 
-    [RelayCommand(CanExecute = nameof(CanScan))]
+    private bool CanRescan() => !IsScanning && Tree is not null;
+
+    /// <summary>Scans the results on screen again (F5 / ⌘R), whatever the path box holds.</summary>
+    [RelayCommand(CanExecute = nameof(CanRescan))]
     private Task RescanAsync()
     {
-        var path = Tree?.Info.Source == ScanSource.Snapshot ? Tree.Info.RootPath : Tree?.RootPath;
-        return path is null ? Task.CompletedTask : ScanPathAsync(path);
+        if (ResultsPath is not { } path) return Task.CompletedTask;
+        PathText = path;
+        return ScanPathAsync(path);
     }
 
     [RelayCommand]
@@ -250,6 +331,11 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
         FocusNode = FileTree.Root;
         HoveredNode = FileTree.None;
         if (tree is not null) tree.NodeRemoved += OnNodeRemoved;
+
+        // The path box names what is on screen, so the scan button offers to rescan the snapshot's folder,
+        // unless the snapshot was taken on another system (e.g. a Windows path opened on Linux).
+        if (tree?.Info.Source == ScanSource.Snapshot && Path.IsPathFullyQualified(tree.Info.RootPath))
+            PathText = tree.Info.RootPath;
 
         FolderTree.Load(tree);
         foreach (var vm in AnalysisViewModels) vm.Load(tree);
@@ -358,7 +444,18 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
 
     public void Open(int node) => Try(() => _fileActions.Open(Tree!.GetPath(node)));
 
-    public void Reveal(int node) => Try(() => _fileActions.Reveal(Tree!.GetPath(node)));
+    public async Task RevealAsync(int node)
+    {
+        if (Tree is null) return;
+        try
+        {
+            await _fileActions.RevealAsync(Tree.GetPath(node));
+        }
+        catch (Exception ex) when (ex is IOException or System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            await _dialogs.ShowErrorAsync("Could not show in folder", ex.Message);
+        }
+    }
 
     public void ShowProperties(int node) => Try(() => _fileActions.ShowProperties(Tree!.GetPath(node)));
 

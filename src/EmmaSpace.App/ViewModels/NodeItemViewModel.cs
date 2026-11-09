@@ -16,7 +16,7 @@ public interface INodeActions
 {
     bool CanShowProperties { get; }
     void Open(int node);
-    void Reveal(int node);
+    Task RevealAsync(int node);
     Task CopyPathAsync(int node);
     void ShowInTree(int node);
     void ShowInTreemap(int node);
@@ -85,6 +85,9 @@ public partial class NodeItemViewModel : ObservableObject
 
     public static string MoveToTrashHeader { get; } = $"Move to {FileActions.TrashName}…";
 
+    /// <summary>The name each platform uses: Finder on macOS, a plain folder elsewhere.</summary>
+    public static string RevealHeader { get; } = OperatingSystem.IsMacOS() ? "Show in Finder" : "Show in folder";
+
     /// <summary>
     /// False for placeholder rows (e.g. "… N more items"): they carry their owner's node, so no
     /// file action may run on them.
@@ -103,7 +106,7 @@ public partial class NodeItemViewModel : ObservableObject
     private void Open() => Actions.Open(Node);
 
     [RelayCommand(CanExecute = nameof(CanAct))]
-    private void Reveal() => Actions.Reveal(Node);
+    private Task Reveal() => Actions.RevealAsync(Node);
 
     [RelayCommand(CanExecute = nameof(CanAct))]
     private Task CopyPath() => Actions.CopyPathAsync(Node);
