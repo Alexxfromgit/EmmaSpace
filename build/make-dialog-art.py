@@ -20,9 +20,10 @@ ASSETS = ROOT / "src" / "EmmaSpace.App" / "Assets"
 WIDTH, HEIGHT = 420, 600
 
 # name: (source art, output, crop as x,y,width fractions of the art's width; the height follows from 7:10)
+# Both use the same crop width, so Emma appears at the same size in either dialog.
 PORTRAITS = {
-    "question": ("emmaspace-dialog-art.png", "dialog-emma.jpg", (0.29, 0.052, 0.443)),       # face and open hand
-    "error": ("emmaspace-error-art.png", "dialog-emma-error.jpg", (0.374, 0.039, 0.41)),     # face and warning sign
+    "question": ("emmaspace-dialog-art.png", "dialog-emma.jpg", (0.29, 0.052, 0.443)),   # face and open hand
+    "error": ("emmaspace-error-art.png", "dialog-emma-error.jpg", (0.31, 0.052, 0.443)),  # face and warning sign
 }
 
 
@@ -30,7 +31,8 @@ def make(source: pathlib.Path, out: pathlib.Path, crop: tuple[float, float, floa
     art = Image.open(source).convert("RGB")
     x, y, w = (v * art.width for v in crop)
     h = w * HEIGHT / WIDTH
-    portrait = art.crop((round(x), round(y), round(x + w), round(min(y + h, art.height))))
+    y = max(0.0, min(y, art.height - h))  # keep the crop inside the art, so it is never squeezed
+    portrait = art.crop((round(x), round(y), round(x + w), round(y + h)))
     portrait.resize((WIDTH, HEIGHT), Image.Resampling.LANCZOS).save(out, "JPEG", quality=90, optimize=True, progressive=True)
     print(f"Wrote {out}")
 
