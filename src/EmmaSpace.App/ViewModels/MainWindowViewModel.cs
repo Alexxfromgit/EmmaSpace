@@ -24,6 +24,9 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
     private readonly SettingsService _settings;
     private readonly ElevationService _elevation;
     private CancellationTokenSource? _scanCts;
+    // The scanner that produced the results on screen, when it was not the default (the Linux fast scan), so that
+    // rescanning them reads the same way instead of silently walking as the user.
+    private IScanner? _resultsScanner;
     private int _loadGeneration; // bumped by every scan and snapshot load; the newest one wins
     private readonly SemaphoreSlim _snapshotOffers = new(1, 1);
     private Task _snapshotLoad = Task.CompletedTask; // the latest snapshot load, which the next offer waits for
@@ -71,8 +74,12 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
         ? @"Drive or folder to analyze, e.g. C:\"
         : "Drive or folder to analyze, e.g. " + Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
-    /// <summary>Offer the MFT fast scan, which needs a restart as administrator.</summary>
+    /// <summary>Offer the fast scan: the NTFS master file table (restart as administrator) or ext4 metadata (root helper).</summary>
     public bool CanElevate => _elevation.CanElevate;
+
+    public string FastScanTip => _elevation.ScansThroughHelper
+        ? "Read the drive as administrator; on ext4 its inode tables are read directly (much faster)"
+        : "Restart as administrator and read the NTFS master file table directly (much faster)";
     public bool CanShowProperties => _fileActions.CanShowProperties;
 
     [ObservableProperty]
@@ -229,7 +236,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
         // reported as gone instead of quietly scanning a look-alike (e.g. "reports" for "reports ").
         if (match == TypedPathMatch.Same)
         {
-            await ScanPathAsync(results!);
+            await ScanPathAsync(results!, _resultsScanner);
             return;
         }
         // Whether stray spaces are part of a folder's name is a question for the disk, which can be slow
@@ -250,7 +257,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
     {
         if (ResultsPath is not { } path) return Task.CompletedTask;
         PathText = path;
-        return ScanPathAsync(path);
+        return ScanPathAsync(path, _resultsScanner);
     }
 
     [RelayCommand]
@@ -267,6 +274,42 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
     private async Task FastScanAsync()
     {
         var path = Tree?.RootPath ?? (string.IsNullOrWhiteSpace(PathText) ? null : TypedPath(PathText));
+        if (_elevation.ScansThroughHelper)
+        {
+            // The fast scan reads a whole ext2/3/4 file system at once. Elsewhere running as root gains nothing, so
+            // say so instead of asking for a password; for a subfolder, offer the file system that holds it.
+            path ??= "/";
+            const string password = "\n\nYour system will ask for your password. Emma Space itself keeps running as you.";
+            var mount = LinuxMounts.Find(path);
+            if (mount is { IsExt: false })
+            {
+                await _dialogs.ShowErrorAsync("Fast scan",
+                    $"Fast scan reads ext2, ext3 and ext4 file systems directly. {path} is on {mount.Type}, " +
+                    "where it would be no faster than Analyze.");
+                return;
+            }
+            if (mount is { IsMountPoint: false })
+            {
+                if (!await _dialogs.ConfirmAsync("Fast scan",
+                        $"Fast scan reads a whole file system at once, straight from its inode tables. {path} is on the " +
+                        $"{mount.Type} file system at {mount.MountPoint}, so Emma Space will scan all of {mount.MountPoint}, " +
+                        "usually many times faster than reading folder by folder." + password,
+                        $"Scan {mount.MountPoint}"))
+                    return;
+                path = mount.MountPoint;
+            }
+            else if (!await _dialogs.ConfirmAsync("Fast scan",
+                         $"Emma Space will read {path} straight from the file system's inode tables, which is usually " +
+                         "many times faster than reading folder by folder." + password,
+                         "Continue"))
+            {
+                return;
+            }
+            PathText = path;
+            await ScanPathAsync(path, _elevation.FastScanner);
+            return;
+        }
+
         if (!await _dialogs.ConfirmAsync("Fast scan",
                 "Emma Space will restart as administrator so it can read the drive's master file table directly. " +
                 "This is usually many times faster than reading folder by folder.\n\nWindows will ask for permission.",
@@ -283,7 +326,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
         RefreshDrives();
     }
 
-    private async Task ScanPathAsync(string path)
+    private async Task ScanPathAsync(string path, IScanner? scanner = null)
     {
         if (IsScanning) return;
         IsScanning = true;
@@ -301,10 +344,11 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
 
         try
         {
-            var tree = await _scanner.ScanAsync(path, new ScanOptions(), progress, _scanCts.Token);
+            var tree = await (scanner ?? _scanner).ScanAsync(path, new ScanOptions(), progress, _scanCts.Token);
             _settings.Current.LastPath = path;
             _settings.Save();
             SetTree(tree);
+            _resultsScanner = scanner;
         }
         catch (OperationCanceledException)
         {
@@ -328,6 +372,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
     private void SetTree(FileTree? tree)
     {
         var old = Tree;
+        _resultsScanner = null;
         foreach (var vm in AnalysisViewModels) vm.Cancel();
         if (old is not null) old.NodeRemoved -= OnNodeRemoved;
 
@@ -370,7 +415,12 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
         var info = Tree.Info;
         var source = info.Source switch
         {
-            ScanSource.Native => info.Mode == ScanMode.Mft ? "native MFT scan" : "native scan",
+            ScanSource.Native => info.Mode switch
+            {
+                ScanMode.Mft => "native MFT scan",
+                ScanMode.Ext4 => "native ext4 scan",
+                _ => "native scan",
+            },
             ScanSource.Managed => "managed scan",
             _ => "snapshot",
         };

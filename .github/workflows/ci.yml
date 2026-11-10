@@ -56,7 +56,7 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           if [ "$RUNNER_OS" = "macOS" ]; then brew install ninja || true; fi
-          if [ "$RUNNER_OS" = "Linux" ]; then sudo apt-get update && sudo apt-get install -y ninja-build; fi
+          if [ "$RUNNER_OS" = "Linux" ]; then sudo apt-get update && sudo apt-get install -y ninja-build e2fsprogs; fi # mke2fs builds the ext4 test images
 
       # Windows: no -G, so CMake uses the newest Visual Studio on the runner. This needs no developer
       # command prompt, whose environment (e.g. Platform=x64) would leak into the .NET build steps.
@@ -84,6 +84,11 @@ jobs:
       - name: Native tests
         if: matrix.test
         run: ctest --test-dir artifacts/native-build/ci -C Release --output-on-failure --no-tests=error
+
+      # Runners have passwordless sudo and loop devices: scan a loop-mounted ext4 image from its block device.
+      - name: Native ext4 test as root (Linux)
+        if: matrix.test && runner.os == 'Linux'
+        run: sudo artifacts/native-build/ci/native/emmascan/tests/emmascan_tests "ext4: as root a loop-mounted image scanned in ext4 mode equals the walker exactly"
 
       - name: Build .NET
         run: dotnet build EmmaSpace.slnx -c Release -p:EmmaSkipNative=true

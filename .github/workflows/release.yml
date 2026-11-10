@@ -117,7 +117,7 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           if [ "$RUNNER_OS" = "macOS" ]; then brew install ninja || true; fi
-          if [ "$RUNNER_OS" = "Linux" ]; then sudo apt-get update && sudo apt-get install -y ninja-build squashfs-tools; fi # mksquashfs builds the AppImage
+          if [ "$RUNNER_OS" = "Linux" ]; then sudo apt-get update && sudo apt-get install -y ninja-build squashfs-tools e2fsprogs; fi # mksquashfs builds the AppImage, mke2fs the ext4 test images
 
       # Windows: no -G, so CMake uses the newest Visual Studio (no developer prompt leaking into dotnet).
       - name: Configure native engine (Windows)
@@ -156,8 +156,10 @@ jobs:
       - name: Check the native engine is in the package
         shell: pwsh
         run: |
-          $lib = @{ Windows = 'emmascan.dll'; macOS = 'libemmascan.dylib'; Linux = 'libemmascan.so' }[$env:RUNNER_OS]
-          if (-not (Test-Path (Join-Path $env:PACK_INPUT $lib))) { throw "$lib is missing from $env:PACK_INPUT" }
+          $libs = @{ Windows = @('emmascan.dll'); macOS = @('libemmascan.dylib'); Linux = @('libemmascan.so', 'emmascan-helper') }[$env:RUNNER_OS]
+          foreach ($lib in $libs) {
+            if (-not (Test-Path (Join-Path $env:PACK_INPUT $lib))) { throw "$lib is missing from $env:PACK_INPUT" }
+          }
 
       # ---- Optional code signing: each block switches on once its secrets/variables exist.
       - name: Azure login (Windows signing)

@@ -63,7 +63,7 @@
           </Panel>
           <Button Grid.Column="3" Classes="subtle" Content="⚡ Fast scan" Command="{Binding FastScanCommand}" Margin="4,0,0,0"
                   IsVisible="{Binding CanElevate}" IsEnabled="{Binding !IsScanning}"
-                  ToolTip.Tip="Restart as administrator and read the NTFS master file table directly (much faster)" />
+                  ToolTip.Tip="{Binding FastScanTip}" />
         </Grid>
 
         <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="2" IsVisible="{Binding HasTree}">

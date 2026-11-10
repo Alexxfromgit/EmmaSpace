@@ -17,6 +17,8 @@ es_status scan(es_scan& scan) {
         return win::mft_scan(scan, root);
     case ES_MODE_WALKER:
         return win::walk(scan, root);
+    case ES_MODE_EXT4:
+        return ES_ERR_NOT_SUPPORTED;
     default:
         // Auto: the MFT is far faster for a whole volume but needs elevation and NTFS. It always
         // reads the entire table, so for a subfolder walking that folder is quicker.

@@ -9,9 +9,11 @@ FetchContent_MakeAvailable(Catch2)
 # NodeStore is internal, so its sources are compiled straight into the test binary;
 # the API tests go through the shared library like any consumer would.
 add_executable(emmascan_tests
+    test_ext4.cpp
     test_mft_parser.cpp
     test_node_store.cpp
     test_scan_api.cpp
+    ../src/ext4/ext4_parser.cpp
     ../src/node_store.cpp
     ../src/ntfs/mft_parser.cpp
 )

@@ -84,7 +84,7 @@ public class ScannerTests
             new DefaultScanner().ScanAsync(folder, new ScanOptions(), null, cts.Token));
     }
 
-    private sealed class SyncProgress(List<ScanProgress> reports) : IProgress<ScanProgress>
+    internal sealed class SyncProgress(List<ScanProgress> reports) : IProgress<ScanProgress>
     {
         public void Report(ScanProgress value)
         {

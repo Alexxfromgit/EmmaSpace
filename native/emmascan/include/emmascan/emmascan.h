@@ -52,7 +52,8 @@ typedef enum es_status {
 typedef enum es_scan_mode {
     ES_MODE_AUTO = 0,   /* fastest available method */
     ES_MODE_WALKER = 1, /* directory enumeration, works without elevation */
-    ES_MODE_MFT = 2     /* NTFS master file table, requires elevation */
+    ES_MODE_MFT = 2,    /* NTFS master file table, requires elevation (Windows) */
+    ES_MODE_EXT4 = 3    /* ext2/3/4 inode tables read from the block device, requires root (Linux) */
 } es_scan_mode;
 
 typedef enum es_scan_phase {

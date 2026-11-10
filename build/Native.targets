@@ -14,6 +14,10 @@
     <EmmaNativeFile Condition="$([MSBuild]::IsOSPlatform('Windows'))">emmascan.dll</EmmaNativeFile>
     <EmmaNativeFile Condition="$([MSBuild]::IsOSPlatform('OSX'))">libemmascan.dylib</EmmaNativeFile>
     <EmmaNativeFile Condition="$([MSBuild]::IsOSPlatform('Linux'))">libemmascan.so</EmmaNativeFile>
+    <!-- Linux: the fast scan runs this helper as root through pkexec (see HelperScanner). -->
+    <EmmaNativeHelper Condition="$([MSBuild]::IsOSPlatform('Linux'))">emmascan-helper</EmmaNativeHelper>
+    <EmmaNativeTargets>emmascan</EmmaNativeTargets>
+    <EmmaNativeTargets Condition="'$(EmmaNativeHelper)' != ''">emmascan $(EmmaNativeHelper)</EmmaNativeTargets>
   </PropertyGroup>
 
   <Target Name="EmmaBuildNative" BeforeTargets="BeforeBuild" Condition="'$(EmmaSkipNative)' != 'true' And '$(EmmaNativePreset)' != '' And '$(DesignTimeBuild)' != 'true'">
@@ -22,12 +26,15 @@
     </Exec>
     <Warning Condition="'$(_EmmaCMakeExit)' != '0'" Text="CMake not found; skipping the native engine. Emma Space will use the managed scanner." />
     <Exec Condition="'$(_EmmaCMakeExit)' == '0' And !Exists('$(EmmaNativeBuildDir)CMakeCache.txt')" Command="cmake --preset $(EmmaNativePreset)" WorkingDirectory="$(RepoRoot)" />
-    <Exec Condition="'$(_EmmaCMakeExit)' == '0'" Command="cmake --build --preset $(EmmaNativePreset)-release --target emmascan" WorkingDirectory="$(RepoRoot)" />
+    <Exec Condition="'$(_EmmaCMakeExit)' == '0'" Command="cmake --build --preset $(EmmaNativePreset)-release --target $(EmmaNativeTargets)" WorkingDirectory="$(RepoRoot)" />
   </Target>
 
   <Target Name="EmmaIncludeNative" AfterTargets="EmmaBuildNative" BeforeTargets="AssignTargetPaths" Condition="'$(EmmaNativeFile)' != ''">
     <ItemGroup Condition="Exists('$(EmmaNativeDir)$(EmmaNativeFile)')">
       <None Include="$(EmmaNativeDir)$(EmmaNativeFile)" Link="$(EmmaNativeFile)" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    </ItemGroup>
+    <ItemGroup Condition="'$(EmmaNativeHelper)' != '' And Exists('$(EmmaNativeDir)$(EmmaNativeHelper)')">
+      <None Include="$(EmmaNativeDir)$(EmmaNativeHelper)" Link="$(EmmaNativeHelper)" CopyToOutputDirectory="PreserveNewest" Visible="false" />
     </ItemGroup>
   </Target>
 </Project>

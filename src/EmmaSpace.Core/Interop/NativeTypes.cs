@@ -22,6 +22,8 @@ public enum ScanMode : uint
     Auto = 0,
     Walker = 1,
     Mft = 2,
+    /// <summary>ext2/3/4 inode tables read from the block device (Linux, root).</summary>
+    Ext4 = 3,
 }
 
 public enum ScanPhase : uint
