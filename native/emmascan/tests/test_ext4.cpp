@@ -618,6 +618,10 @@ TEST_CASE("ext4: as root a loop-mounted image scanned in ext4 mode equals the wa
         fs::path p;
         ~Unmount() { std::system(("umount " + quote(p) + " >/dev/null 2>&1").c_str()); }
     } unmount{mnt};
+    // Where / is a shared mount (systemd's default, e.g. on CI runners) the loop mount is shared too, and so is
+    // the bind mount made from it below: the tmpfs on empty/deep would then also be mounted on docs/deep. Keep
+    // the mounts made here from propagating to each other, as the bind mount check below expects.
+    REQUIRE(std::system(("mount --make-private " + quote(mnt) + " >/dev/null 2>&1").c_str()) == 0);
     // A change not yet written back must still be seen (syncfs + buffered device reads).
     write_file(mnt / "fresh.txt", 12345);
 
