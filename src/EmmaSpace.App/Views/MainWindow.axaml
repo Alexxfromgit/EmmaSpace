@@ -36,7 +36,7 @@
     <!-- Top bar -->
     <Border DockPanel.Dock="Top" Background="{DynamicResource EmmaSurfaceBrush}" BorderBrush="{DynamicResource EmmaLineBrush}"
             BorderThickness="0,0,0,1" Padding="14,10">
-      <Grid ColumnDefinitions="Auto,*,Auto">
+      <Grid ColumnDefinitions="Auto,*,Auto,Auto">
         <Button Classes="subtle" Command="{Binding GoHomeCommand}" Padding="4" ToolTip.Tip="Start page">
           <StackPanel Orientation="Horizontal" Spacing="10">
             <Image Source="avares://EmmaSpace/Assets/emmaspace.png" Width="32" Height="32"
@@ -87,6 +87,11 @@
         </StackPanel>
         <Button Grid.Column="2" Classes="subtle" Content="Open snapshot…" Command="{Binding OpenSnapshotCommand}"
                 IsVisible="{Binding IsHome}" />
+        <Button Grid.Column="3" Classes="subtle" Command="{Binding OpenSettingsCommand}" Padding="8" Margin="2,0,0,0"
+                ToolTip.Tip="{x:Static vm:MainWindowViewModel.SettingsTip}" AutomationProperties.Name="Settings">
+          <PathIcon Width="18" Height="18"
+                    Data="F1 M10.60,1.59 L13.40,1.59 L14.10,4.07 L16.12,4.91 L18.37,3.65 L20.35,5.63 L19.09,7.88 L19.93,9.90 L22.41,10.60 L22.41,13.40 L19.93,14.10 L19.09,16.12 L20.35,18.37 L18.37,20.35 L16.12,19.09 L14.10,19.93 L13.40,22.41 L10.60,22.41 L9.90,19.93 L7.88,19.09 L5.63,20.35 L3.65,18.37 L4.91,16.12 L4.07,14.10 L1.59,13.40 L1.59,10.60 L4.07,9.90 L4.91,7.88 L3.65,5.63 L5.63,3.65 L7.88,4.91 L9.90,4.07 Z M8.60,12 A3.4,3.4 0 1 0 15.40,12 A3.4,3.4 0 1 0 8.60,12 Z" />
+        </Button>
       </Grid>
     </Border>
 

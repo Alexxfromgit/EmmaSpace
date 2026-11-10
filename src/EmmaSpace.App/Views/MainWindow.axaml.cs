@@ -29,6 +29,14 @@ public partial class MainWindow : Window
         var modifiers = Application.Current?.PlatformSettings?.HotkeyConfiguration.CommandModifiers ?? KeyModifiers.Control;
         KeyBindings.Add(new KeyBinding { Gesture = new KeyGesture(Key.F5), Command = rescan });
         KeyBindings.Add(new KeyBinding { Gesture = new KeyGesture(Key.R, modifiers), Command = rescan });
+
+        // Settings: Ctrl+, on Windows and Linux. On macOS ⌘, belongs to the app menu item (App.AddMacAppMenu).
+        if (!OperatingSystem.IsMacOS())
+            KeyBindings.Add(new KeyBinding
+            {
+                Gesture = new KeyGesture(Key.OemComma, KeyModifiers.Control),
+                Command = new RelayCommand(() => ViewModel?.OpenSettingsCommand.Execute(null)),
+            });
     }
 
     private MainWindowViewModel? ViewModel => DataContext as MainWindowViewModel;

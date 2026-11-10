@@ -10,6 +10,9 @@ public sealed class AppSettings
     public int OldFilesAgeIndex { get; set; } = 1;
     public bool OldFilesByAccess { get; set; }
     public bool CheckForUpdates { get; set; } = true;
+
+    /// <summary>"System", "Light" or "Dark"; read with <see cref="EmmaSpace.Core.Platform.AppThemes.Parse"/>.</summary>
+    public string? Theme { get; set; }
 }
 
 [JsonSerializable(typeof(AppSettings))]

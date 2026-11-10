@@ -27,12 +27,16 @@ public sealed partial class UpdateViewModel : ObservableObject
     /// <summary>Installed copies update themselves; a development or portable build cannot.</summary>
     public bool CanUpdate => _updates.IsInstalled;
 
+    /// <summary>
+    /// Shown unticked where updating is not possible (the menu item is disabled there), so it never looks on while
+    /// nothing checks; the saved choice is kept for an installed copy.
+    /// </summary>
     public bool AutoCheck
     {
-        get => _settings.Current.CheckForUpdates;
+        get => CanUpdate && _settings.Current.CheckForUpdates;
         set
         {
-            if (_settings.Current.CheckForUpdates == value) return;
+            if (!CanUpdate || _settings.Current.CheckForUpdates == value) return;
             _settings.Current.CheckForUpdates = value;
             _settings.Save();
             OnPropertyChanged();

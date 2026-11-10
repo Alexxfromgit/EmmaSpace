@@ -1,6 +1,7 @@
 using Avalonia.Controls;
 using Avalonia.Input.Platform;
 using Avalonia.Platform.Storage;
+using EmmaSpace.App.ViewModels;
 using EmmaSpace.App.Views;
 using EmmaSpace.Core.Platform;
 
@@ -19,9 +20,12 @@ public interface IDialogService
     Task ShowErrorAsync(string title, string message);
 
     Task SetClipboardTextAsync(string text);
+
+    /// <summary>Opens the Settings window, unless a dialog (Settings itself, or a question) is already open.</summary>
+    Task ShowSettingsAsync();
 }
 
-public sealed class DialogService(Window owner) : IDialogService
+public sealed class DialogService(Window owner, Func<SettingsViewModel> settings) : IDialogService
 {
     public async Task<string?> PickFolderAsync()
     {
@@ -70,6 +74,11 @@ public sealed class DialogService(Window owner) : IDialogService
 
     public Task ShowErrorAsync(string title, string message) =>
         new MessageDialog(title, message, "OK", null, false, DialogArt.Error).ShowDialog<bool>(owner);
+
+    public Task ShowSettingsAsync() =>
+        // Ctrl+, and the macOS menu item still work while a dialog is open; don't stack Settings on top of it.
+        owner.OwnedWindows.Count > 0 ? Task.CompletedTask
+            : new SettingsWindow { DataContext = settings() }.ShowDialog(owner);
 
     public async Task SetClipboardTextAsync(string text)
     {
