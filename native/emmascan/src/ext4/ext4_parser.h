@@ -61,6 +61,10 @@ struct Superblock {
     bool has_group_checksums() const { return (feature_ro_compat & (0x10 | 0x400)) != 0; }
 };
 
+// Most block groups read: 512 TiB at mke2fs's usual 128 MiB per group (4 KiB blocks), and about 72 bytes each
+// in Ext4Index::load before any metadata past the superblock is read. Larger file systems are walked instead.
+constexpr uint32_t kMaxGroups = 1u << 22;
+
 enum class SuperblockCheck {
     Ok,
     NotExt,      // no ext2/3/4 magic or nonsensical geometry

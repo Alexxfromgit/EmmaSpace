@@ -172,6 +172,24 @@ TEST_CASE("ext4: superblock checks") {
     auto bad_geometry = sb;
     put32(&bad_geometry[0x00], 8000); // not inodes_per_group * groups
     CHECK(ext4::parse_superblock(bad_geometry.data(), bad_geometry.size(), out) == ext4::SuperblockCheck::NotExt);
+
+    // Consistent geometry claiming more block groups than the reader sizes arrays for: one inode and eight blocks
+    // per group. The largest count allowed parses; one group more (and billions) is left to the walker.
+    const auto many_groups = [&](uint64_t groups) {
+        auto s = sb;
+        put32(&s[0x00], static_cast<uint32_t>(groups)); // inodes = groups * 1
+        put32(&s[0x04], static_cast<uint32_t>(groups * 8));
+        put32(&s[0x20], 8);
+        put32(&s[0x28], 1);
+        return s;
+    };
+    auto at_cap = many_groups(ext4::kMaxGroups);
+    REQUIRE(ext4::parse_superblock(at_cap.data(), at_cap.size(), out) == ext4::SuperblockCheck::Ok);
+    CHECK(out.group_count == ext4::kMaxGroups);
+    auto past_cap = many_groups(uint64_t{ext4::kMaxGroups} + 1);
+    CHECK(ext4::parse_superblock(past_cap.data(), past_cap.size(), out) == ext4::SuperblockCheck::Unsupported);
+    auto billions = many_groups(uint64_t{UINT32_MAX} / 8); // the block count must fit in 32 bits here
+    CHECK(ext4::parse_superblock(billions.data(), billions.size(), out) == ext4::SuperblockCheck::Unsupported);
 }
 
 TEST_CASE("ext4: inode times use the extra epoch bits and nanoseconds") {

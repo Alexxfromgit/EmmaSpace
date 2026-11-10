@@ -201,6 +201,9 @@ SuperblockCheck parse_superblock(const uint8_t* d, size_t length, Superblock& sb
     const uint64_t groups = (sb.block_count - sb.first_data_block + sb.blocks_per_group - 1) / sb.blocks_per_group;
     if (groups == 0 || groups > UINT32_MAX || uint64_t{sb.inodes_per_group} * groups != sb.inode_count)
         return SuperblockCheck::NotExt;
+    // load() sizes its per-group arrays from this count before reading anything else, so a crafted superblock
+    // (e.g. one inode per group) must not claim billions of groups. Past the cap the walker reads it instead.
+    if (groups > kMaxGroups) return SuperblockCheck::Unsupported;
     sb.group_count = static_cast<uint32_t>(groups);
 
     if ((sb.feature_incompat & ~kKnownIncompat) != 0) return SuperblockCheck::Unsupported;
