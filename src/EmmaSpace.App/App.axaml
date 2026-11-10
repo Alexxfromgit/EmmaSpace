@@ -1,5 +1,6 @@
 <Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:sys="using:System"
              x:Class="EmmaSpace.App.App"
              Name="Emma Space"
              RequestedThemeVariant="Default">
@@ -14,6 +15,18 @@
       <Color x:Key="SystemAccentColorLight1">#8466FF</Color>
       <Color x:Key="SystemAccentColorLight2">#9B82FF</Color>
       <Color x:Key="SystemAccentColorLight3">#B6A4FF</Color>
+
+      <!-- TableView pads its header row with this and sizes every column from what is left. Our rows are inset
+           4 (margin) + 8 (padding) on each side (see ":is(ListBox).rows" below), so the header gets the same
+           12: then headers sit exactly over their cells and the rows don't overflow into a horizontal scrollbar. -->
+      <Thickness x:Key="TableViewRowPadding">12,9,12,12</Thickness>
+
+      <!-- Header alignment follows the column's content (text left, numbers right), which a column's
+           HorizontalContentAlignment sets for both. A column that stretches its cells (a share bar) but holds
+           a quantity puts its header on the right with this template. -->
+      <DataTemplate x:Key="RightAlignedHeader" x:DataType="sys:String">
+        <TextBlock Text="{Binding}" TextAlignment="Right" />
+      </DataTemplate>
 
       <ResourceDictionary.ThemeDictionaries>
         <ResourceDictionary x:Key="Light">

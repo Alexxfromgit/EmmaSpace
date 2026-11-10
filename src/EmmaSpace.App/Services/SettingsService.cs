@@ -13,6 +13,9 @@ public sealed class AppSettings
 
     /// <summary>"System", "Light" or "Dark"; read with <see cref="EmmaSpace.Core.Platform.AppThemes.Parse"/>.</summary>
     public string? Theme { get; set; }
+
+    /// <summary>Columns the user hid, by table key (see <see cref="EmmaSpace.App.Controls.ColumnPicker"/>) and then header text.</summary>
+    public Dictionary<string, List<string>>? HiddenColumns { get; set; }
 }
 
 [JsonSerializable(typeof(AppSettings))]

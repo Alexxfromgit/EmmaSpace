@@ -5,6 +5,7 @@ using Avalonia.Input;
 using Avalonia.Markup.Xaml;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
+using EmmaSpace.App.Controls;
 using EmmaSpace.App.Services;
 using EmmaSpace.App.ViewModels;
 using EmmaSpace.App.Views;
@@ -27,6 +28,7 @@ public partial class App : Application
             // The saved theme applies before the first window shows, so it never flashes the system one.
             var settings = new SettingsService();
             SettingsViewModel.Apply(AppThemes.Parse(settings.Current.Theme));
+            ColumnPicker.Settings = settings;
             var window = new MainWindow();
             _services = ConfigureServices(window, settings);
             var viewModel = _services.GetRequiredService<MainWindowViewModel>();
