@@ -191,7 +191,7 @@
           <!-- Folder tree -->
           <Border Classes="card" ClipToBounds="True">
             <!-- The tree is a flat list of visible rows, so a TableView handles it; the first column draws the hierarchy. -->
-            <TableView x:Name="FolderList" Classes="rows nodes" ItemsSource="{Binding FolderTree.Rows}"
+            <TableView x:Name="FolderList" Classes="rows nodes" c:ColumnPicker.Key="folders" ItemsSource="{Binding FolderTree.Rows}"
                        SelectedItem="{Binding FolderTree.SelectedRow}" Padding="0,0,0,4">
               <TableView.Columns>
                 <TableViewColumn Header="Name" Width="*">
@@ -228,7 +228,7 @@
                     </DataTemplate>
                   </TableViewColumn.CellTemplate>
                 </TableViewColumn>
-                <TableViewColumn Header="Share" Width="120" HorizontalContentAlignment="Stretch">
+                <TableViewColumn Header="Share" Width="120" HorizontalContentAlignment="Stretch" HeaderTemplate="{StaticResource RightAlignedHeader}">
                   <TableViewColumn.CellTemplate>
                     <DataTemplate x:DataType="vm:TreeRowViewModel">
                       <Grid ColumnDefinitions="*,54" VerticalAlignment="Center" IsVisible="{Binding !IsMore}">
@@ -328,7 +328,7 @@
                   </DockPanel>
 
                   <Grid Grid.Column="1" RowDefinitions="*,10,Auto,*" Margin="16,0,0,0">
-                    <TableView Classes="rows" ItemsSource="{Binding FileTypes.Extensions}" SelectedItem="{Binding FileTypes.SelectedExtension}">
+                    <TableView Classes="rows" c:ColumnPicker.Key="fileTypes" ItemsSource="{Binding FileTypes.Extensions}" SelectedItem="{Binding FileTypes.SelectedExtension}">
                       <TableView.Columns>
                         <TableViewColumn Header="Extension" Width="*">
                           <TableViewColumn.CellTemplate>
@@ -340,28 +340,28 @@
                             </DataTemplate>
                           </TableViewColumn.CellTemplate>
                         </TableViewColumn>
-                        <TableViewColumn Header="Category" Width="110">
+                        <TableViewColumn Header="Category" Width="96">
                           <TableViewColumn.CellTemplate>
                             <DataTemplate x:DataType="vm:ExtensionRowViewModel">
                               <TextBlock Text="{Binding Category}" Classes="muted" VerticalAlignment="Center" />
                             </DataTemplate>
                           </TableViewColumn.CellTemplate>
                         </TableViewColumn>
-                        <TableViewColumn Header="Size" Width="88" HorizontalContentAlignment="Right">
+                        <TableViewColumn Header="Size" Width="80" HorizontalContentAlignment="Right">
                           <TableViewColumn.CellTemplate>
                             <DataTemplate x:DataType="vm:ExtensionRowViewModel">
                               <TextBlock Text="{Binding SizeText}" Classes="num" VerticalAlignment="Center" />
                             </DataTemplate>
                           </TableViewColumn.CellTemplate>
                         </TableViewColumn>
-                        <TableViewColumn Header="Files" Width="70" HorizontalContentAlignment="Right">
+                        <TableViewColumn Header="Files" Width="64" HorizontalContentAlignment="Right">
                           <TableViewColumn.CellTemplate>
                             <DataTemplate x:DataType="vm:ExtensionRowViewModel">
                               <TextBlock Text="{Binding CountText}" Classes="num muted" VerticalAlignment="Center" />
                             </DataTemplate>
                           </TableViewColumn.CellTemplate>
                         </TableViewColumn>
-                        <TableViewColumn Header="Share" Width="90" HorizontalContentAlignment="Stretch">
+                        <TableViewColumn Header="Share" Width="72" HorizontalContentAlignment="Stretch" HeaderTemplate="{StaticResource RightAlignedHeader}">
                           <TableViewColumn.CellTemplate>
                             <DataTemplate x:DataType="vm:ExtensionRowViewModel">
                               <c:ShareBar Value="{Binding Share}" Fill="{Binding Brush}" Track="{DynamicResource EmmaTrackBrush}"
@@ -376,7 +376,7 @@
                       <Run Text="{Binding FileTypes.SelectedExtension.Extension, FallbackValue=''}" />
                       <Run Text="files" />
                     </TextBlock>
-                    <c:FileTable Grid.Row="3" ItemsSource="{Binding FileTypes.ExtensionFiles}" />
+                    <c:FileTable Grid.Row="3" c:ColumnPicker.Key="fileTypeFiles" ItemsSource="{Binding FileTypes.ExtensionFiles}" />
                   </Grid>
                 </Grid>
               </TabItem>
@@ -384,7 +384,7 @@
               <TabItem Header="Largest files">
                 <DockPanel Margin="4,4,4,8">
                   <TextBlock DockPanel.Dock="Top" Text="{Binding Largest.Summary}" Classes="muted" Margin="12,4,0,8" />
-                  <c:FileTable ItemsSource="{Binding Largest.Files}" SelectedItem="{Binding Largest.SelectedFile}" />
+                  <c:FileTable c:ColumnPicker.Key="largest" ItemsSource="{Binding Largest.Files}" SelectedItem="{Binding Largest.SelectedFile}" />
                 </DockPanel>
               </TabItem>
 
@@ -404,7 +404,7 @@
                     <TextBlock Text="{Binding Duplicates.Status}" Classes="muted" TextWrapping="Wrap" />
                   </StackPanel>
                   <Grid RowDefinitions="*,10,Auto,*" IsVisible="{Binding Duplicates.HasRun}">
-                    <TableView Classes="rows" ItemsSource="{Binding Duplicates.Groups}" SelectedItem="{Binding Duplicates.SelectedGroup}">
+                    <TableView Classes="rows" c:ColumnPicker.Key="duplicates" ItemsSource="{Binding Duplicates.Groups}" SelectedItem="{Binding Duplicates.SelectedGroup}">
                       <TableView.Columns>
                         <TableViewColumn Header="File" Width="*">
                           <TableViewColumn.CellTemplate>
@@ -437,7 +437,7 @@
                       </TableView.Columns>
                     </TableView>
                     <TextBlock Grid.Row="2" Text="Copies (right-click to open, reveal or recycle)" Classes="h2" Margin="12,0,0,6" />
-                    <c:FileTable Grid.Row="3" ItemsSource="{Binding Duplicates.SelectedGroup.Files, FallbackValue={x:Null}}" />
+                    <c:FileTable Grid.Row="3" c:ColumnPicker.Key="duplicateCopies" ItemsSource="{Binding Duplicates.SelectedGroup.Files, FallbackValue={x:Null}}" />
                   </Grid>
                 </DockPanel>
               </TabItem>
@@ -451,7 +451,7 @@
                       <ComboBox ItemsSource="{x:Static vm:CleanupViewModel.AgeOptions}" SelectedIndex="{Binding Cleanup.AgeIndex}" />
                     </StackPanel>
                     <TextBlock DockPanel.Dock="Top" Text="{Binding Cleanup.OldSummary}" Classes="muted" Margin="8,0,0,8" />
-                    <c:FileTable ItemsSource="{Binding Cleanup.OldFiles}" />
+                    <c:FileTable c:ColumnPicker.Key="oldFiles" ItemsSource="{Binding Cleanup.OldFiles}" />
                   </DockPanel>
                   <DockPanel Grid.Column="2">
                     <TextBlock DockPanel.Dock="Top" Text="Empty folders" Classes="h2" Margin="8,10,0,10" />
@@ -475,7 +475,7 @@
                     <TextBlock Text="{Binding Compare.Summary}" Classes="muted" TextWrapping="Wrap" />
                     <ProgressBar IsIndeterminate="True" Classes="usage" IsVisible="{Binding Compare.IsBusy}" />
                   </StackPanel>
-                  <TableView Classes="rows" ItemsSource="{Binding Compare.Changes}" IsVisible="{Binding Compare.HasResult}">
+                  <TableView Classes="rows" c:ColumnPicker.Key="compare" ItemsSource="{Binding Compare.Changes}" IsVisible="{Binding Compare.HasResult}">
                     <TableView.Columns>
                       <TableViewColumn Header="Change" Width="64">
                         <TableViewColumn.CellTemplate>
