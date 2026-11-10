@@ -31,6 +31,8 @@
           <SolidColorBrush x:Key="EmmaSelectionBrush" Color="#E4DDFF" />
           <SolidColorBrush x:Key="EmmaCardHoverBrush" Color="#FBFAFF" />
           <SolidColorBrush x:Key="EmmaCardHoverLineBrush" Color="#B6A4FF" />
+          <!-- How strongly the start page's painting shows through: the art is dark, so it needs less on a light window. -->
+          <x:Double x:Key="EmmaBackdropOpacity">0.07</x:Double>
         </ResourceDictionary>
         <ResourceDictionary x:Key="Dark">
           <SolidColorBrush x:Key="EmmaWindowBrush" Color="#121118" />
@@ -47,6 +49,7 @@
           <SolidColorBrush x:Key="EmmaSelectionBrush" Color="#302858" />
           <SolidColorBrush x:Key="EmmaCardHoverBrush" Color="#23212F" />
           <SolidColorBrush x:Key="EmmaCardHoverLineBrush" Color="#5B49B8" />
+          <x:Double x:Key="EmmaBackdropOpacity">0.09</x:Double>
         </ResourceDictionary>
       </ResourceDictionary.ThemeDictionaries>
     </ResourceDictionary>
