@@ -6,7 +6,7 @@
         x:DataType="vm:MainWindowViewModel"
         Title="{Binding WindowTitle}"
         Icon="avares://EmmaSpace/Assets/emmaspace.ico"
-        Width="1320" Height="840" MinWidth="960" MinHeight="580"
+        Width="1320" Height="700" MinWidth="960" MinHeight="580"
         WindowStartupLocation="CenterScreen">
 
   <Window.Styles>
