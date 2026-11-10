@@ -4,6 +4,7 @@ using System.Globalization;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using EmmaSpace.App.Services;
+using EmmaSpace.Core.Analysis;
 using EmmaSpace.Core.Export;
 using EmmaSpace.Core.Formatting;
 using EmmaSpace.Core.Interop;
@@ -29,12 +30,13 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
     private IScanner? _resultsScanner;
     private int _loadGeneration; // bumped by every scan and snapshot load; the newest one wins
     private readonly SemaphoreSlim _snapshotOffers = new(1, 1);
+    private readonly SemaphoreSlim _duplicateTrash = new(1, 1); // one duplicate copy checked and moved at a time
     private Task _snapshotLoad = Task.CompletedTask; // the latest snapshot load, which the next offer waits for
     private bool _snapshotHandedOver; // a snapshot came from outside already, so later ones are asked about
     private bool _syncingSelection;
 
     public MainWindowViewModel(IScanner scanner, IFileActions fileActions, IDialogService dialogs, SettingsService settings,
-        ElevationService elevation, UpdateViewModel updates)
+        ElevationService elevation, UpdateViewModel updates, HashCacheService hashCache)
     {
         _scanner = scanner;
         Updates = updates;
@@ -49,7 +51,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
         };
         FileTypes = new FileTypesViewModel(this);
         Largest = new LargestFilesViewModel(this);
-        Duplicates = new DuplicatesViewModel(this, settings);
+        Duplicates = new DuplicatesViewModel(this, settings, hashCache);
         Cleanup = new CleanupViewModel(this, settings);
         Compare = new CompareViewModel(this, dialogs);
         PathText = settings.Current.LastPath ?? "";
@@ -582,17 +584,78 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
         SelectedTabIndex = 0;
     }
 
-    public async Task MoveToTrashAsync(int node)
+    public Task MoveToTrashAsync(int node) => MoveToTrashAsync(node, copies: null);
+
+    public async Task MoveDuplicateToTrashAsync(int node, IReadOnlyList<int> copies)
+    {
+        // One at a time: two copies of one group moved at once could each be checked against the other.
+        await _duplicateTrash.WaitAsync();
+        try
+        {
+            await MoveToTrashAsync(node, copies);
+        }
+        finally
+        {
+            _duplicateTrash.Release();
+        }
+    }
+
+    private async Task MoveToTrashAsync(int node, IReadOnlyList<int>? copies)
     {
         var tree = Tree;
         if (tree is null || node == FileTree.Root || tree.Nodes[node].IsDeleted) return;
         var path = tree.GetPath(node);
         ref readonly var n = ref tree.Nodes[node];
-        var what = n.IsDirectory ? $"the folder \"{tree.GetName(node)}\" ({n.FileCount:N0} files, {ByteSize.Format(n.Size)})"
-                                 : $"\"{tree.GetName(node)}\" ({ByteSize.Format(n.Size)})";
+        var name = tree.GetName(node);
+        var size = n.Size;
+        var what = n.IsDirectory ? $"the folder \"{name}\" ({n.FileCount:N0} files, {ByteSize.Format(n.Size)})"
+                                 : $"\"{name}\" ({ByteSize.Format(n.Size)})";
+        // The other copies still on screen. With none left (moved or removed meanwhile, e.g. by a click that
+        // waited for this one) this is the last copy: the question says so, and it is moved like any file.
+        var others = copies is null ? []
+            : copies.Where(c => c != node && c > FileTree.Root && c < tree.Count && !tree.Nodes[c].IsDeleted).Select(tree.GetPath).ToList();
         var bin = FileActions.TrashName;
-        if (!await _dialogs.ConfirmAsync($"Move to {bin}?", $"Move {what} to the {bin}?\n\n{path}", $"Move to {bin}", destructive: true))
+        var check = copies is null ? ""
+            : others.Count > 0 ? "\n\nEmma Space first checks that it is still identical to another copy."
+            : "\n\nIt is the last copy left of these duplicates: the others were moved or removed.";
+        if (!await _dialogs.ConfirmAsync($"Move to {bin}?", $"Move {what} to the {bin}?{check}\n\n{path}", $"Move to {bin}", destructive: true))
             return;
+
+        if (others.Count > 0)
+        {
+            // The search may be old (or saved in a snapshot) and the files may have changed since: compare
+            // them byte by byte now, without any remembered hash. Copies in the bin don't count.
+            var ct = Duplicates.BeginCheck($"Checking that \"{name}\" is still identical to another copy…");
+            string? identical = null;
+            var cancelled = false;
+            try
+            {
+                var progress = new Progress<double>(Duplicates.ReportCheck);
+                identical = await Task.Run(() => DuplicateFinder.FindIdenticalCopyAsync(path, size, others, progress, ct), ct);
+            }
+            catch (OperationCanceledException)
+            {
+                cancelled = true; // Stop: nothing is moved
+            }
+            finally
+            {
+                Duplicates.EndCheck(cancelled);
+            }
+            if (cancelled) return;
+            if (!ReferenceEquals(tree, Tree) || tree.Nodes[node].IsDeleted)
+            {
+                await _dialogs.ShowErrorAsync($"Not moved to {bin}",
+                    $"The results changed while the copies were compared, so \"{name}\" was not moved. Try again.\n\n{path}");
+                return;
+            }
+            if (identical is null)
+            {
+                await _dialogs.ShowErrorAsync($"Not moved to {bin}",
+                    $"\"{name}\" is no longer identical to any other copy outside the {bin}: a file changed since they were " +
+                    $"compared, or can't be read. Search for duplicates again.\n\n{path}");
+                return;
+            }
+        }
 
         try
         {
@@ -631,7 +694,9 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
         var name = $"{SafeName(tree.RootPath)}-{DateTime.Now:yyyy-MM-dd-HHmm}{SnapshotFile.Extension}";
         var path = await _dialogs.SaveFileAsync("Save snapshot", name, "Emma Space snapshot", SnapshotFile.Extension);
         if (path is null || !ReferenceEquals(tree, Tree)) return; // the scan was replaced or closed meanwhile
-        await RunFileTaskAsync("Could not save snapshot", () => SnapshotFile.SaveAsync(tree, path));
+        // A completed duplicate search is saved with it, so opening the snapshot shows it without searching again.
+        var duplicates = Duplicates.CurrentResult;
+        await RunFileTaskAsync("Could not save snapshot", () => SnapshotFile.SaveAsync(tree, path, duplicates));
     }
 
     [RelayCommand]
@@ -710,13 +775,14 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
         var load = ++_loadGeneration;
         try
         {
-            var tree = await SnapshotFile.LoadAsync(path);
+            var (tree, duplicates) = await SnapshotFile.LoadSnapshotAsync(path);
             if (load != _loadGeneration || IsScanning)
             {
                 tree.Dispose();
                 return;
             }
             SetTree(tree);
+            if (duplicates is not null) Duplicates.ShowSaved(duplicates);
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException)
         {

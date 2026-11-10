@@ -1,15 +1,23 @@
+using System.Buffers.Binary;
 using System.IO.Compression;
+using System.IO.Hashing;
 using System.Runtime.InteropServices;
 using System.Text;
+using EmmaSpace.Core.Analysis;
 using EmmaSpace.Core.Formatting;
 using EmmaSpace.Core.Interop;
 using EmmaSpace.Core.Model;
 
 namespace EmmaSpace.Core.Snapshots;
 
+/// <summary>A loaded snapshot: the tree, and the duplicate search results saved with it, if any.</summary>
+public sealed record LoadedSnapshot(FileTree Tree, DuplicateResult? Duplicates);
+
 /// <summary>
 /// Saves and loads scans as <c>.emmasnap</c> files: a small header followed by the raw node
 /// array and name pool, Brotli-compressed. Loading is a straight memory copy, no parsing.
+/// Version 2 adds the results of a duplicate search after the name pool; a snapshot without
+/// one is still written as version 1, so older Emma Space releases can open it.
 /// </summary>
 public static class SnapshotFile
 {
@@ -18,7 +26,8 @@ public static class SnapshotFile
     /// <summary>How every snapshot file starts, whatever its format version (used to recognize the file type).</summary>
     public const string MagicPrefix = "EMSNAP";
     private static ReadOnlySpan<byte> Magic => "EMSNAP01"u8;
-    private const int FormatVersion = 1;
+    private const int TreeVersion = 1;
+    private const int DuplicatesVersion = 2;
 
     // Far above any real scan (a 5.8 M-entry system drive is well under 10 M nodes), but bounded,
     // so a malformed header cannot ask for an arbitrary amount of memory.
@@ -33,13 +42,20 @@ public static class SnapshotFile
     /// are copied before the first await, so a removal while the file is being compressed cannot
     /// produce a half-updated snapshot, and native memory is not touched in the background.
     /// </summary>
-    public static async Task SaveAsync(FileTree tree, string path, CancellationToken ct = default)
+    public static Task SaveAsync(FileTree tree, string path, CancellationToken ct = default) => SaveAsync(tree, path, null, ct);
+
+    /// <summary>
+    /// Saves a snapshot together with the results of a duplicate search (null for none). Copies of
+    /// files removed since the search are left out, and so are groups with fewer than two copies left.
+    /// </summary>
+    public static async Task SaveAsync(FileTree tree, string path, DuplicateResult? duplicates, CancellationToken ct = default)
     {
         using var copy = tree.Copy();
+        var saved = Prune(copy, duplicates);
         var temp = path + ".tmp";
         await using (var file = File.Create(temp))
         {
-            await Task.Run(() => Save(copy, file), ct);
+            await Task.Run(() => Save(copy, file, saved), ct);
         }
         File.Move(temp, path, overwrite: true);
     }
@@ -51,29 +67,120 @@ public static class SnapshotFile
             return Load(file);
         }, ct);
 
-    /// <summary>Saves synchronously, on the calling thread (which must be the one changing the tree).</summary>
-    public static void Save(FileTree tree, Stream output) => Write(tree.Info, tree.Nodes, tree.Names, output);
-
-    private static void Write(ScanInfo info, ReadOnlySpan<EsNode> nodes, ReadOnlySpan<char> names, Stream output)
-    {
-        using (var writer = new BinaryWriter(output, Encoding.UTF8, leaveOpen: true))
+    public static Task<LoadedSnapshot> LoadSnapshotAsync(string path, CancellationToken ct = default) =>
+        Task.Run(() =>
         {
-            writer.Write(Magic);
-            writer.Write(FormatVersion);
-            writer.Write(info.RootPath);
-            writer.Write(info.ScannedAt.ToUnixTimeMilliseconds());
-            writer.Write((long)info.Elapsed.TotalMilliseconds);
-            writer.Write((int)info.Mode);
-            writer.Write((int)info.Source);
-            writer.Write(info.Errors);
-            writer.Write(nodes.Length);
-            writer.Write(names.Length);
-            writer.Write(Marshal.SizeOf<EsNode>());
+            using var file = File.OpenRead(path);
+            return LoadSnapshot(file);
+        }, ct);
+
+    /// <summary>
+    /// Saves synchronously, on the calling thread (which must be the one changing the tree), with the
+    /// results of a duplicate search if <paramref name="duplicates"/> is not null.
+    /// </summary>
+    public static void Save(FileTree tree, Stream output, DuplicateResult? duplicates = null) =>
+        Write(tree.Info, tree.Nodes, tree.Names, Prune(tree, duplicates), output);
+
+    /// <summary>
+    /// The groups as they stand in <paramref name="tree"/> now: only live files of the group's size,
+    /// each in one group at most, and only groups that still have two or more copies.
+    /// </summary>
+    private static DuplicateResult? Prune(FileTree tree, DuplicateResult? duplicates)
+    {
+        if (duplicates is null) return null;
+        var nodes = tree.Nodes;
+        var seen = new HashSet<int>();
+        var groups = new List<DuplicateGroup>(duplicates.Groups.Count);
+        foreach (var group in duplicates.Groups)
+        {
+            var members = new List<int>(group.Nodes.Count);
+            foreach (var node in group.Nodes)
+            {
+                if (node > FileTree.Root && node < nodes.Length && IsLiveFileOfSize(nodes[node], group.FileSize) && seen.Add(node))
+                    members.Add(node);
+            }
+            if (members.Count > 1) groups.Add(new DuplicateGroup(group.FileSize, members));
+        }
+        return new DuplicateResult(duplicates.MinSize, groups);
+    }
+
+    /// <summary>A copy the duplicate search would compare: a live file of the group's size that is not a link, cloud placeholder or unreadable.</summary>
+    private static bool IsLiveFileOfSize(in EsNode node, ulong size) =>
+        !node.IsDirectory && !node.IsDeleted && node.Size == size && (node.Flags & DuplicateFinder.SkippedFlags) == 0;
+
+    private static void Write(ScanInfo info, ReadOnlySpan<EsNode> nodes, ReadOnlySpan<char> names, DuplicateResult? duplicates,
+        Stream output)
+    {
+        var section = duplicates is null ? null : DuplicatesSection(duplicates);
+        var header = Header(section is null ? TreeVersion : DuplicatesVersion, info.RootPath, info.ScannedAt.ToUnixTimeMilliseconds(),
+            (long)info.Elapsed.TotalMilliseconds, (int)info.Mode, (int)info.Source, info.Errors, nodes.Length, names.Length);
+        output.Write(header);
+        if (section is not null)
+        {
+            // Version 2: a checksum of the header and everything compressed below. Brotli has none of its own,
+            // and a flipped bit could otherwise turn a saved copy into another file of the same size.
+            Span<byte> checksum = stackalloc byte[16];
+            BinaryPrimitives.WriteUInt128LittleEndian(checksum, Checksum(header, nodes, names, section));
+            output.Write(checksum);
         }
 
         using var brotli = new BrotliStream(output, CompressionLevel.Fastest, leaveOpen: true);
         brotli.Write(MemoryMarshal.AsBytes(nodes));
         brotli.Write(MemoryMarshal.AsBytes(names));
+        if (section is not null) brotli.Write(section);
+    }
+
+    /// <summary>Version 2's results: minSize u64, groupCount i32, then per group fileSize u64, count i32, count × node u32.</summary>
+    private static byte[] DuplicatesSection(DuplicateResult duplicates)
+    {
+        using var buffer = new MemoryStream();
+        using (var section = new BinaryWriter(buffer, Encoding.UTF8, leaveOpen: true))
+        {
+            section.Write(duplicates.MinSize);
+            section.Write(duplicates.Groups.Count);
+            foreach (var group in duplicates.Groups)
+            {
+                section.Write(group.FileSize);
+                section.Write(group.Nodes.Count);
+                foreach (var node in group.Nodes) section.Write((uint)node);
+            }
+        }
+        return buffer.ToArray();
+    }
+
+    /// <summary>
+    /// The header up to the version 2 checksum, as written. The loader builds it again from the fields it read,
+    /// so the checksum covers what was actually loaded (a damaged root path re-encodes differently).
+    /// </summary>
+    private static byte[] Header(int version, string rootPath, long scannedAtMs, long elapsedMs, int mode, int source, int errors,
+        int nodeCount, int namesLength)
+    {
+        using var buffer = new MemoryStream();
+        using (var writer = new BinaryWriter(buffer, Encoding.UTF8, leaveOpen: true))
+        {
+            writer.Write(Magic);
+            writer.Write(version);
+            writer.Write(rootPath);
+            writer.Write(scannedAtMs);
+            writer.Write(elapsedMs);
+            writer.Write(mode);
+            writer.Write(source);
+            writer.Write(errors);
+            writer.Write(nodeCount);
+            writer.Write(namesLength);
+            writer.Write(Marshal.SizeOf<EsNode>());
+        }
+        return buffer.ToArray();
+    }
+
+    private static UInt128 Checksum(ReadOnlySpan<byte> header, ReadOnlySpan<EsNode> nodes, ReadOnlySpan<char> names, ReadOnlySpan<byte> section)
+    {
+        var hasher = new XxHash128();
+        hasher.Append(header);
+        hasher.Append(MemoryMarshal.AsBytes(nodes));
+        hasher.Append(MemoryMarshal.AsBytes(names));
+        hasher.Append(section);
+        return hasher.GetCurrentHashAsUInt128();
     }
 
     /// <summary>
@@ -108,7 +215,8 @@ public static class SnapshotFile
         {
             using var input = File.OpenRead(path);
             using var reader = new BinaryReader(input, Encoding.UTF8);
-            if (!reader.ReadBytes(Magic.Length).AsSpan().SequenceEqual(Magic) || reader.ReadInt32() != FormatVersion) return null;
+            if (!reader.ReadBytes(Magic.Length).AsSpan().SequenceEqual(Magic) || reader.ReadInt32() is not (TreeVersion or DuplicatesVersion))
+                return null;
             var rootPath = ReadRootPath(reader);
             var scannedAtMs = reader.ReadInt64();
             return UnixTime.IsValid(scannedAtMs) ? (rootPath, DateTimeOffset.FromUnixTimeMilliseconds(scannedAtMs).ToLocalTime()) : null;
@@ -141,14 +249,18 @@ public static class SnapshotFile
         return Encoding.UTF8.GetString(utf8);
     }
 
-    public static FileTree Load(Stream input)
+    /// <summary>Loads the tree only; duplicate search results saved with it are checked but not returned.</summary>
+    public static FileTree Load(Stream input) => LoadSnapshot(input).Tree;
+
+    public static LoadedSnapshot LoadSnapshot(Stream input)
     {
         using var reader = new BinaryReader(input, Encoding.UTF8, leaveOpen: true);
         Span<byte> magic = stackalloc byte[8];
         input.ReadExactly(magic);
         if (!magic.SequenceEqual(Magic)) throw new InvalidDataException("Not an Emma Space snapshot.");
         var version = reader.ReadInt32();
-        if (version != FormatVersion) throw new InvalidDataException($"Unsupported snapshot version {version}.");
+        if (version is not (TreeVersion or DuplicatesVersion))
+            throw new InvalidDataException($"Unsupported snapshot version {version}. It may have been saved by a newer Emma Space.");
 
         var rootPath = ReadRootPath(reader);
         var scannedAtMs = reader.ReadInt64();
@@ -157,8 +269,9 @@ public static class SnapshotFile
             throw new InvalidDataException("Snapshot header has an invalid date or duration.");
         var scannedAt = DateTimeOffset.FromUnixTimeMilliseconds(scannedAtMs).ToLocalTime();
         var elapsed = TimeSpan.FromMilliseconds(elapsedMs);
-        var mode = (ScanMode)reader.ReadInt32();
-        reader.ReadInt32(); // original scan source, informational
+        var modeValue = reader.ReadInt32();
+        var mode = (ScanMode)modeValue;
+        var source = reader.ReadInt32(); // original scan source, informational (only checksummed)
         var errors = reader.ReadInt32();
         var nodeCount = reader.ReadInt32();
         var namesLength = reader.ReadInt32();
@@ -166,18 +279,120 @@ public static class SnapshotFile
         if (nodeSize != Marshal.SizeOf<EsNode>() || nodeCount <= 0 || nodeCount > MaxNodes || namesLength < 0 ||
             namesLength > (long)(nodeCount - 1) * MaxNameCharsPerNode + MaxRootNameChars)
             throw new InvalidDataException("Snapshot header is corrupt.");
+        var checksum = UInt128.Zero;
+        if (version == DuplicatesVersion)
+        {
+            var lower = reader.ReadUInt64();
+            checksum = new UInt128(reader.ReadUInt64(), lower);
+        }
 
         EsNode[] nodes;
         char[] names;
-        using (var brotli = new BrotliStream(input, CompressionMode.Decompress, leaveOpen: true))
+        byte[]? section = null;
+        try
         {
+            using var brotli = new BrotliStream(input, CompressionMode.Decompress, leaveOpen: true);
             nodes = ReadArray<EsNode>(brotli, nodeCount);
             names = ReadArray<char>(brotli, namesLength);
+            if (version == DuplicatesVersion) section = ReadToEnd(brotli, MaxSectionBytes(nodeCount));
+        }
+        catch (InvalidOperationException)
+        {
+            // How BrotliStream reports data it can't decode.
+            throw new InvalidDataException("Snapshot data is damaged.");
         }
 
+        DuplicateResult? duplicates = null;
+        if (section is not null)
+        {
+            var header = Header(version, rootPath, scannedAtMs, elapsedMs, modeValue, source, errors, nodeCount, namesLength);
+            if (Checksum(header, nodes, names, section) != checksum) throw new InvalidDataException("Snapshot data is damaged.");
+            duplicates = ReadDuplicates(section, nodes.Length);
+        }
         Validate(nodes, names);
+        if (duplicates is not null) ValidateDuplicates(duplicates, nodes);
         var info = new ScanInfo(rootPath, scannedAt, elapsed, mode, ScanSource.Snapshot, errors);
-        return new FileTree(new ArrayNodeStorage(nodes, names), info);
+        return new LoadedSnapshot(new FileTree(new ArrayNodeStorage(nodes, names), info), duplicates);
+    }
+
+    // The largest duplicates section possible for this many nodes: its two counts, then at most one group per
+    // two nodes (12 bytes each) and one 4-byte entry per node, since no node is in two groups.
+    private static long MaxSectionBytes(int nodeCount) => 12 + 6L * nodeCount + 4L * nodeCount;
+
+    /// <summary>
+    /// The rest of the stream, at most <paramref name="limit"/> bytes, in a buffer that grows only as data
+    /// arrives, so a damaged count cannot make it allocate more than the file holds.
+    /// </summary>
+    private static byte[] ReadToEnd(Stream stream, long limit)
+    {
+        var buffer = new byte[(int)Math.Min(limit + 1, 64 * 1024)];
+        var filled = 0;
+        while (true)
+        {
+            if (filled == buffer.Length)
+            {
+                if (filled > limit) throw new InvalidDataException("Snapshot has unexpected data at the end.");
+                Array.Resize(ref buffer, (int)Math.Min(limit + 1, (long)buffer.Length * 2));
+            }
+            var read = stream.Read(buffer, filled, buffer.Length - filled);
+            if (read == 0) break;
+            filled += read;
+        }
+        if (filled > limit) throw new InvalidDataException("Snapshot has unexpected data at the end.");
+        return buffer[..filled];
+    }
+
+    /// <summary>
+    /// Parses the duplicates section, with every count checked against the bytes actually there before
+    /// anything is allocated for it.
+    /// </summary>
+    private static DuplicateResult ReadDuplicates(ReadOnlySpan<byte> data, int nodeCount)
+    {
+        var corrupt = new InvalidDataException("Snapshot duplicate results are corrupt.");
+        if (data.Length < 12) throw corrupt;
+        var minSize = BinaryPrimitives.ReadUInt64LittleEndian(data);
+        var groupCount = BinaryPrimitives.ReadInt32LittleEndian(data[8..]);
+        data = data[12..];
+        // Every group takes at least 12 + 2 × 4 bytes; no node can be in two groups.
+        if (groupCount < 0 || groupCount > nodeCount / 2 || groupCount > data.Length / 20) throw corrupt;
+        var groups = new List<DuplicateGroup>(groupCount);
+        for (var g = 0; g < groupCount; g++)
+        {
+            if (data.Length < 12) throw corrupt;
+            var fileSize = BinaryPrimitives.ReadUInt64LittleEndian(data);
+            var count = BinaryPrimitives.ReadInt32LittleEndian(data[8..]);
+            data = data[12..];
+            if (count < 2 || count > nodeCount || count > data.Length / 4) throw corrupt;
+            var members = new int[count];
+            for (var i = 0; i < count; i++)
+            {
+                var node = BinaryPrimitives.ReadUInt32LittleEndian(data[(i * 4)..]);
+                if (node >= (uint)nodeCount) throw corrupt;
+                members[i] = (int)node;
+            }
+            data = data[(count * 4)..];
+            groups.Add(new DuplicateGroup(fileSize, members));
+        }
+        if (!data.IsEmpty) throw new InvalidDataException("Snapshot has unexpected data at the end.");
+        return new DuplicateResult(minSize, groups);
+    }
+
+    // Each copy must be a live file of its group's size, in one group only, and no smaller than the
+    // search looked at: file actions (move to Trash) work on these nodes.
+    private static void ValidateDuplicates(DuplicateResult duplicates, EsNode[] nodes)
+    {
+        var seen = new bool[nodes.Length];
+        var smallest = Math.Max(1, duplicates.MinSize);
+        foreach (var group in duplicates.Groups)
+        {
+            if (group.FileSize < smallest) throw new InvalidDataException("Snapshot duplicate results are corrupt.");
+            foreach (var node in group.Nodes)
+            {
+                if (node == FileTree.Root || seen[node] || !IsLiveFileOfSize(nodes[node], group.FileSize))
+                    throw new InvalidDataException("Snapshot duplicate results do not match its files.");
+                seen[node] = true;
+            }
+        }
     }
 
     /// <summary>

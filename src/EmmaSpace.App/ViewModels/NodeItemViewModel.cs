@@ -21,6 +21,12 @@ public interface INodeActions
     void ShowInTree(int node);
     void ShowInTreemap(int node);
     Task MoveToTrashAsync(int node);
+
+    /// <summary>
+    /// Moves a copy from a duplicate group to the Trash, but only after checking, byte by byte and right
+    /// now, that it is still identical to another of <paramref name="copies"/>.
+    /// </summary>
+    Task MoveDuplicateToTrashAsync(int node, IReadOnlyList<int> copies);
     void ShowProperties(int node);
 }
 
