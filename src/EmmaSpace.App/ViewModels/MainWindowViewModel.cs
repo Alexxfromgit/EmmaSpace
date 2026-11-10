@@ -64,6 +64,12 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
     public CompareViewModel Compare { get; }
     public UpdateViewModel Updates { get; }
 
+    public static string SettingsTip { get; } = OperatingSystem.IsMacOS() ? "Settings (⌘,)" : "Settings (Ctrl+,)";
+
+    /// <summary>Settings button, Ctrl+, and on macOS Emma Space ▸ Settings… (⌘,).</summary>
+    [RelayCommand]
+    private Task OpenSettingsAsync() => _dialogs.ShowSettingsAsync();
+
     public ObservableCollection<DriveViewModel> Drives { get; } = [];
     public ObservableCollection<BreadcrumbItem> Breadcrumbs { get; } = [];
 

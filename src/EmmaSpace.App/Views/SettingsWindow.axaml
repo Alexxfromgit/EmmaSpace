@@ -1,0 +1,66 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:EmmaSpace.App.ViewModels"
+        x:Class="EmmaSpace.App.Views.SettingsWindow"
+        x:DataType="vm:SettingsViewModel"
+        Title="Settings"
+        Width="720" SizeToContent="Height" CanResize="False" CanMinimize="False" CanMaximize="False"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+  <!-- Emma holding a gear on the left, like the portraits in MessageDialog. Her gear sits near the panel's
+       right edge, so only the last few percent fade into the window's background. -->
+  <Grid ColumnDefinitions="Auto,*">
+    <Panel Width="340" MinHeight="380" ClipToBounds="True">
+      <Panel.Background>
+        <!-- Taller than 380 px (larger text): the left side, her hair, is cut first, so the gear stays. -->
+        <ImageBrush Source="avares://EmmaSpace/Assets/settings-emma.jpg" Stretch="UniformToFill" AlignmentX="Right" AlignmentY="Top" />
+      </Panel.Background>
+      <Panel.OpacityMask>
+        <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,0%">
+          <GradientStop Offset="0" Color="Black" />
+          <GradientStop Offset="0.86" Color="Black" />
+          <GradientStop Offset="0.94" Color="#80000000" />
+          <GradientStop Offset="1" Color="Transparent" />
+        </LinearGradientBrush>
+      </Panel.OpacityMask>
+    </Panel>
+
+    <DockPanel Grid.Column="1" Margin="12,22,28,22">
+      <Button DockPanel.Dock="Bottom" Classes="accent" Content="Done" HorizontalAlignment="Right" MinWidth="88"
+              IsDefault="True" IsCancel="True" Click="OnDone" Margin="0,24,0,0" />
+
+      <StackPanel Spacing="22">
+        <TextBlock Text="Settings" Classes="h1" />
+
+        <StackPanel Spacing="8">
+          <TextBlock Text="Theme" Classes="h2" />
+          <StackPanel Orientation="Horizontal" Spacing="20">
+            <RadioButton GroupName="Theme" Content="System" IsChecked="{Binding IsSystemTheme}" />
+            <RadioButton GroupName="Theme" Content="Light" IsChecked="{Binding IsLightTheme}" />
+            <RadioButton GroupName="Theme" Content="Dark" IsChecked="{Binding IsDarkTheme}" />
+          </StackPanel>
+          <TextBlock Text="{x:Static vm:SettingsViewModel.SystemThemeHint}" Classes="caption" TextWrapping="Wrap" />
+        </StackPanel>
+
+        <StackPanel Spacing="8">
+          <TextBlock Text="Updates" Classes="h2" />
+          <CheckBox Content="Check for updates automatically" IsChecked="{Binding Updates.AutoCheck}"
+                    IsEnabled="{Binding Updates.CanUpdate}" />
+          <TextBlock Text="{x:Static vm:SettingsViewModel.AutoCheckHint}" Classes="caption" TextWrapping="Wrap"
+                     IsVisible="{Binding Updates.CanUpdate}" />
+          <TextBlock Text="{x:Static vm:SettingsViewModel.CannotUpdateHint}" Classes="caption" TextWrapping="Wrap"
+                     IsVisible="{Binding !Updates.CanUpdate}" />
+          <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,4,0,0">
+            <Button Content="Check now" Command="{Binding Updates.CheckCommand}" IsEnabled="{Binding Updates.CanUpdate}"
+                    CornerRadius="8" Padding="14,6" />
+            <TextBlock Classes="caption" VerticalAlignment="Center">
+              <Run Text="Emma Space" />
+              <Run Text="{Binding Updates.VersionText, Mode=OneTime}" />
+            </TextBlock>
+          </StackPanel>
+          <TextBlock Text="{Binding Updates.StatusText}" Classes="caption" TextWrapping="Wrap" IsVisible="{Binding Updates.HasStatus}" />
+          <TextBlock Text="{Binding Updates.ReadyText}" Classes="caption" TextWrapping="Wrap" IsVisible="{Binding Updates.IsUpdateReady}" />
+        </StackPanel>
+      </StackPanel>
+    </DockPanel>
+  </Grid>
+</Window>

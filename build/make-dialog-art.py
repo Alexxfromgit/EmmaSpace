@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""Generates the portraits shown in Emma Space's dialogs from the art in branding/.
+"""Generates the portraits shown in Emma Space's dialogs and Settings window from the art in branding/.
 
 Each source is a wide painting with Emma in the middle. This crops a portrait around her at the
-dialog panel's 7:10 shape and scales it for 2x displays (420 x 600 px, shown at 210 x 300):
-  branding/emmaspace-dialog-art.png  ->  src/EmmaSpace.App/Assets/dialog-emma.jpg        (questions)
-  branding/emmaspace-error-art.png   ->  src/EmmaSpace.App/Assets/dialog-emma-error.jpg  (errors)
-The dialog fades each portrait's right edge into its background itself, so keep her face left of
-about 60 % of the crop. Needs Pillow; the results are committed.
+shape of the panel it fills and scales it for 2x displays:
+  branding/emmaspace-dialog-art.png    ->  src/EmmaSpace.App/Assets/dialog-emma.jpg        (questions, 420 x 600)
+  branding/emmaspace-error-art.png     ->  src/EmmaSpace.App/Assets/dialog-emma-error.jpg  (errors, 420 x 600)
+  branding/emmaspace-settings-art.png  ->  src/EmmaSpace.App/Assets/settings-emma.jpg      (Settings, 680 x 760)
+The dialogs fade each portrait's right edge into their background themselves, so keep her face left
+of about 60 % of the crop (the Settings window fades only the last few percent, for her gear).
+Needs Pillow; the results are committed.
 
-Usage: python3 build/make-dialog-art.py [--only question|error] [--crop X,Y,W]
+Usage: python3 build/make-dialog-art.py [--only question|error|settings] [--crop X,Y,W]
 """
 import argparse
 import pathlib
@@ -17,23 +19,25 @@ from PIL import Image
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 ASSETS = ROOT / "src" / "EmmaSpace.App" / "Assets"
-WIDTH, HEIGHT = 420, 600
+DIALOG = (420, 600)  # the dialogs' 7:10 panel, shown at 210 x 300
+SETTINGS = (680, 760)  # the Settings window's panel, shown at 340 x 380
 
-# name: (source art, output, crop as x,y,width fractions of the art's width; the height follows from 7:10)
-# Both use the same crop width, so Emma appears at the same size in either dialog.
+# name: (source art, output, crop as x,y,width fractions of the art's width, output size; the crop's
+# height follows from the size). Both dialogs use the same crop width, so Emma appears at the same size.
 PORTRAITS = {
-    "question": ("emmaspace-dialog-art.png", "dialog-emma.jpg", (0.29, 0.052, 0.443)),   # face and open hand
-    "error": ("emmaspace-error-art.png", "dialog-emma-error.jpg", (0.31, 0.052, 0.443)),  # face and warning sign
+    "question": ("emmaspace-dialog-art.png", "dialog-emma.jpg", (0.29, 0.052, 0.443), DIALOG),   # face and open hand
+    "error": ("emmaspace-error-art.png", "dialog-emma-error.jpg", (0.31, 0.052, 0.443), DIALOG),  # face and warning sign
+    "settings": ("emmaspace-settings-art.png", "settings-emma.jpg", (0.29, 0.0, 0.595), SETTINGS),  # face and gear
 }
 
 
-def make(source: pathlib.Path, out: pathlib.Path, crop: tuple[float, float, float]) -> None:
+def make(source: pathlib.Path, out: pathlib.Path, crop: tuple[float, float, float], size: tuple[int, int]) -> None:
     art = Image.open(source).convert("RGB")
     x, y, w = (v * art.width for v in crop)
-    h = w * HEIGHT / WIDTH
+    h = w * size[1] / size[0]
     y = max(0.0, min(y, art.height - h))  # keep the crop inside the art, so it is never squeezed
     portrait = art.crop((round(x), round(y), round(x + w), round(y + h)))
-    portrait.resize((WIDTH, HEIGHT), Image.Resampling.LANCZOS).save(out, "JPEG", quality=90, optimize=True, progressive=True)
+    portrait.resize(size, Image.Resampling.LANCZOS).save(out, "JPEG", quality=90, optimize=True, progressive=True)
     print(f"Wrote {out}")
 
 
@@ -43,12 +47,12 @@ def main() -> None:
     parser.add_argument("--crop", help="x,y,width for --only, overriding its default")
     args = parser.parse_args()
 
-    for name, (source, out, crop) in PORTRAITS.items():
+    for name, (source, out, crop, size) in PORTRAITS.items():
         if args.only and name != args.only:
             continue
         if args.crop:
             crop = tuple(float(v) for v in args.crop.split(","))
-        make(ROOT / "branding" / source, ASSETS / out, crop)
+        make(ROOT / "branding" / source, ASSETS / out, crop, size)
 
 
 if __name__ == "__main__":

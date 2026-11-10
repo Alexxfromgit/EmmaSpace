@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Input;
 using Avalonia.Markup.Xaml;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
@@ -23,10 +24,14 @@ public partial class App : Application
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
+            // The saved theme applies before the first window shows, so it never flashes the system one.
+            var settings = new SettingsService();
+            SettingsViewModel.Apply(AppThemes.Parse(settings.Current.Theme));
             var window = new MainWindow();
-            _services = ConfigureServices(window);
+            _services = ConfigureServices(window, settings);
             var viewModel = _services.GetRequiredService<MainWindowViewModel>();
             window.DataContext = viewModel;
+            if (OperatingSystem.IsMacOS()) AddMacAppMenu(viewModel);
             desktop.MainWindow = window;
             // Snapshots double-clicked while this window is open arrive from a short-lived new process.
             var handoff = OperatingSystem.IsMacOS() ? null
@@ -88,16 +93,29 @@ public partial class App : Application
         };
     }
 
-    private static ServiceProvider ConfigureServices(MainWindow window)
+    // macOS keeps Settings in the app menu: Emma Space ▸ Settings… (⌘,). Avalonia adds the standard
+    // Services, Hide and Quit items after the ones set here.
+    private void AddMacAppMenu(MainWindowViewModel viewModel)
+    {
+        var settings = new NativeMenuItem("Settings…")
+        {
+            Command = viewModel.OpenSettingsCommand,
+            Gesture = new KeyGesture(Key.OemComma, KeyModifiers.Meta),
+        };
+        NativeMenu.SetMenu(this, new NativeMenu { Items = { settings } });
+    }
+
+    private static ServiceProvider ConfigureServices(MainWindow window, SettingsService settings)
     {
         var services = new ServiceCollection();
         services.AddSingleton<IScanner, DefaultScanner>();
         services.AddSingleton<IFileActions, FileActions>();
-        services.AddSingleton<SettingsService>();
+        services.AddSingleton(settings);
         services.AddSingleton<ElevationService>();
         services.AddSingleton<UpdateService>();
         services.AddSingleton<UpdateViewModel>();
-        services.AddSingleton<IDialogService>(_ => new DialogService(window));
+        services.AddTransient<SettingsViewModel>();
+        services.AddSingleton<IDialogService>(sp => new DialogService(window, sp.GetRequiredService<SettingsViewModel>));
         services.AddSingleton<MainWindowViewModel>();
         return services.BuildServiceProvider();
     }
