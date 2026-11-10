@@ -10,7 +10,11 @@
 // - When scanning "/", pseudo file systems and other mounted volumes are skipped.
 
 #include "../scan_state.h"
+#include "../utf8.h"
 #include "posix_entry.h"
+#if !defined(__APPLE__)
+#include "ext4_reader.h"
+#endif
 
 #include <dirent.h>
 #include <fcntl.h>
@@ -36,66 +40,6 @@
 
 namespace emmascan::platform {
 namespace {
-
-std::u16string utf8_to_utf16(std::string_view s) {
-    std::u16string out;
-    out.reserve(s.size());
-    for (size_t i = 0; i < s.size();) {
-        const auto c = static_cast<unsigned char>(s[i]);
-        uint32_t cp;
-        size_t n;
-        if (c < 0x80) { cp = c; n = 1; }
-        else if ((c >> 5) == 0x6) { cp = c & 0x1F; n = 2; }
-        else if ((c >> 4) == 0xE) { cp = c & 0x0F; n = 3; }
-        else if ((c >> 3) == 0x1E) { cp = c & 0x07; n = 4; }
-        else { out.push_back(u'�'); ++i; continue; }
-        if (i + n > s.size()) { out.push_back(u'�'); break; }
-        bool ok = true;
-        for (size_t k = 1; k < n; ++k) {
-            const auto cc = static_cast<unsigned char>(s[i + k]);
-            if ((cc >> 6) != 0x2) { ok = false; break; }
-            cp = (cp << 6) | (cc & 0x3F);
-        }
-        if (!ok) { out.push_back(u'�'); ++i; continue; }
-        if (cp >= 0x10000) {
-            cp -= 0x10000;
-            out.push_back(static_cast<char16_t>(0xD800 + (cp >> 10)));
-            out.push_back(static_cast<char16_t>(0xDC00 + (cp & 0x3FF)));
-        } else {
-            out.push_back(static_cast<char16_t>(cp));
-        }
-        i += n;
-    }
-    return out;
-}
-
-std::string utf16_to_utf8(std::u16string_view s) {
-    std::string out;
-    out.reserve(s.size());
-    for (size_t i = 0; i < s.size(); ++i) {
-        uint32_t cp = s[i];
-        if (cp >= 0xD800 && cp <= 0xDBFF && i + 1 < s.size() && s[i + 1] >= 0xDC00 && s[i + 1] <= 0xDFFF) {
-            cp = 0x10000 + ((cp - 0xD800) << 10) + (s[i + 1] - 0xDC00);
-            ++i;
-        }
-        if (cp < 0x80) {
-            out.push_back(static_cast<char>(cp));
-        } else if (cp < 0x800) {
-            out.push_back(static_cast<char>(0xC0 | (cp >> 6)));
-            out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
-        } else if (cp < 0x10000) {
-            out.push_back(static_cast<char>(0xE0 | (cp >> 12)));
-            out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
-            out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
-        } else {
-            out.push_back(static_cast<char>(0xF0 | (cp >> 18)));
-            out.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
-            out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
-            out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
-        }
-    }
-    return out;
-}
 
 // Below "/", these are kernel/pseudo file systems or other disks, not the startup volume's content.
 bool skip_below_root(const std::string& path) {
@@ -315,12 +259,28 @@ private:
 
 es_status scan(es_scan& scan) {
     if (scan.requested_mode == ES_MODE_MFT) return ES_ERR_NOT_SUPPORTED;
+#if defined(__APPLE__)
+    if (scan.requested_mode == ES_MODE_EXT4) return ES_ERR_NOT_SUPPORTED;
+#endif
     std::string root = utf16_to_utf8(scan.root);
     while (root.size() > 1 && root.back() == '/') root.pop_back();
 
     struct stat st{};
     if (stat(root.c_str(), &st) != 0) return errno == EACCES ? ES_ERR_ACCESS_DENIED : ES_ERR_NOT_FOUND;
     if (!S_ISDIR(st.st_mode)) return ES_ERR_INVALID_ARG;
+
+#if !defined(__APPLE__)
+    if (scan.requested_mode == ES_MODE_EXT4) return ext4_scan(scan, root);
+    // Auto: reading ext4's metadata is far faster for a whole file system but needs root. It always reads
+    // every inode table, so for a subfolder walking that folder is quicker.
+    if (scan.requested_mode == ES_MODE_AUTO && is_elevated() && is_ext4_mount_root(root)) {
+        const es_status status = ext4_scan(scan, root);
+        if (status == ES_OK || status == ES_ERR_CANCELLED || scan.cancel.load()) return status;
+        scan.store = NodeStore{};
+        scan.files = scan.directories = scan.bytes = 0;
+        scan.errors = 0;
+    }
+#endif
 
     const std::u16string root16 = utf8_to_utf16(root);
     EntryInfo root_info;

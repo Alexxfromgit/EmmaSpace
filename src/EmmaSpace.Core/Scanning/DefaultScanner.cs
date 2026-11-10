@@ -20,7 +20,7 @@ public sealed class DefaultScanner(NativeScanner native, ManagedScanner managed)
         {
             return await native.ScanAsync(rootPath, options, progress, cancellationToken);
         }
-        catch (ScanException ex) when (ex.Status == EsStatus.NotSupported && options.Mode != ScanMode.Mft)
+        catch (ScanException ex) when (ex.Status == EsStatus.NotSupported && options.Mode is not (ScanMode.Mft or ScanMode.Ext4))
         {
             return await managed.ScanAsync(rootPath, options, progress, cancellationToken);
         }

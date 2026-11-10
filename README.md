@@ -8,12 +8,12 @@
 [![Release](https://img.shields.io/github/v/release/Alexxfromgit/EmmaSpace?sort=semver)](https://github.com/Alexxfromgit/EmmaSpace/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A fast disk space analyzer for Windows, with macOS and Linux engines in progress. It maps every
+A fast disk space analyzer for Windows and Linux, with macOS in progress. It maps every
 file on a drive or folder and shows what is big, old or duplicated, with a cushion treemap, a
 folder tree and clean-up tools.
 
-- **C++ engine** (`native/emmascan`): NTFS master file table reader and parallel directory
-  walkers (Windows, macOS/Linux) behind a plain C ABI.
+- **C++ engine** (`native/emmascan`): NTFS master file table and ext4 inode table readers, and parallel
+  directory walkers (Windows, macOS/Linux) behind a plain C ABI.
 - **C# core** (`src/EmmaSpace.Core`): tree model, analyzers, duplicate finder, snapshots, export.
 - **Avalonia UI** (`src/EmmaSpace.App`): MVVM desktop app on .NET 10, light and dark themes.
 
@@ -47,7 +47,7 @@ right-click → Open the first time.
 | Area | What you get |
 |---|---|
 | Scan | Drives or any folder; progress with live counts; cancel any time; links/junctions are not followed |
-| Fast scan | As administrator, whole NTFS drives are read straight from the master file table (C: with 5.8 M entries in ~8 s instead of minutes) |
+| Fast scan | As administrator, whole NTFS drives are read straight from the master file table (C: with 5.8 M entries in ~8 s instead of minutes). On Linux, whole ext2/3/4 file systems are read straight from their inode tables through a small helper that runs as root (pkexec asks for your password; the app itself keeps running as you) |
 | Cloud files | OneDrive and other cloud placeholders count only what is stored on this PC (marked ☁); unpopulated cloud folders are not listed, so scanning never triggers downloads |
 | Folder tree | Size, share of parent, size on disk, file count; huge folders page in 500 items at a time |
 | Treemap | Squarified layout with cushion shading, colour by file type, labels, click to select, double-click to zoom, breadcrumb to go back |
@@ -68,6 +68,8 @@ EmmaSpace.Core  FileTree (flat arrays) · analyzers · snapshots · export · sc
       │  LibraryImport, zero-copy spans over native memory
 emmascan.dll    C++20: MFT reader (raw volume) · parallel walker (GetFileInformationByHandleEx) · Recycle Bin (IFileOperation)
 libemmascan     macOS/Linux: parallel walker (openat/fstatat, firmlink and hard-link de-duplication, online-only iCloud items never downloaded) · Trash (NSFileManager)
+                Linux: ext4 reader (inode tables and directory blocks from the block device)
+emmascan-helper Linux: runs one scan as root for the app (started through pkexec), result over a pipe
 ```
 
 Lists use Avalonia 12.1's built-in `TableView` (MIT, part of `Avalonia.Controls`): resizable
@@ -84,9 +86,17 @@ up and siblings are sorted largest-first in C++.
 If the native library is missing or the platform has no native backend yet, `DefaultScanner`
 falls back to `ManagedScanner`, which produces the same format in pure .NET.
 
-Scan modes (`es_scan_mode`): **Auto** uses the MFT for a whole NTFS drive when elevated and the
-walker otherwise. The MFT always reads the entire table, so for a subfolder walking it is faster.
-The "⚡ Fast scan" button restarts the app as administrator (`--scan <path>`) to get there.
+Scan modes (`es_scan_mode`): **Auto** uses the MFT for a whole NTFS drive when elevated (on Linux: the
+ext4 reader for an ext2/3/4 mount point when root) and the walker otherwise. Both always read the
+entire file system, so for a subfolder walking it is faster. On Windows the "⚡ Fast scan" button
+restarts the app as administrator (`--scan <path>`) to get there. On Linux it runs `emmascan-helper`
+through pkexec instead (copied to `$XDG_RUNTIME_DIR/emmaspace` first when running from the AppImage,
+whose files root cannot open); the helper streams the finished tree back to the app. For a
+subfolder the button offers to scan the whole ext2/3/4 file system that holds it; on other file systems it
+says that it would be no faster. Other file systems mounted inside the scanned one show up as mount points
+and are not entered, as on Windows. The AppImage copy belongs to the user, so malware already running as the
+user could swap it before pkexec starts it (as with anything run through sudo); pkexec itself is only taken
+from `/usr/bin` or `/bin`.
 
 Measured on this machine (full `C:\`, warm cache):
 
@@ -99,6 +109,15 @@ Measured on this machine (full `C:\`, warm cache):
 ¹ measured before cloud folders were walked. MFT and walker trees were cross-checked: directory
 and file counts agree apart from files changing between passes, NTFS metafiles (`$MFT`, …) and
 folders the walker cannot open.
+
+On Linux (WSL 2, Ubuntu 24.04, ext4 root file system, as root):
+
+| Scanner | Entries | Time | Notes |
+|---|---|---|---|
+| ext4 reader | 77 k | ~0.1 s | every path identical to the walker's apart from other mounted file systems |
+| Native walker | 83 k | ~2.7 s | also walks the 9p, overlay and tmpfs mounts inside `/` |
+
+On `/usr` the ext4 reader matches `du -sb --apparent-size -x` and `find -xdev` exactly.
 
 ## Build and run
 
@@ -113,7 +132,8 @@ dotnet run --project src/EmmaSpace.App
 ```
 
 macOS / Linux: `./build.sh --test` (CMake ≥ 3.25, Ninja, a C++20 compiler and the .NET SDK).
-On Ubuntu 24.04: `sudo apt-get install -y build-essential cmake ninja-build libicu74`.
+On Ubuntu 24.04: `sudo apt-get install -y build-essential cmake ninja-build libicu74 e2fsprogs`
+(mke2fs makes the ext4 images the engine tests read).
 
 CI (`.github/workflows/ci.yml`) builds and tests the engine and .NET code on Windows, macOS and
 Linux for every pull request and push to `main`, cross-compiles Windows ARM64, and uploads Velopack
@@ -157,10 +177,14 @@ dotnet test --project tests/EmmaSpace.Core.Tests
 The Recycle Bin test is hidden because it leaves a file in the real bin:
 `artifacts/native-build/win-x64/native/emmascan/tests/Release/emmascan_tests.exe "[trash]"`.
 
+On Linux one ext4 test needs root: it loop-mounts an image and compares the ext4 reader with the walker
+exactly (CI runs it with sudo):
+`sudo artifacts/native-build/linux-x64/native/emmascan/tests/Release/emmascan_tests "ext4: as root a loop-mounted image scanned in ext4 mode equals the walker exactly"`.
+
 ## Layout
 
 ```
-native/emmascan/      C ABI header, node store, Windows walker + trash, POSIX stub, tests
+native/emmascan/      C ABI header, node store, MFT and ext4 readers, Windows and POSIX walkers, trash, Linux root helper (tools/), tests
 src/EmmaSpace.Core/   Interop, Model, Scanning, Analysis, Snapshots, Export, Platform
 src/EmmaSpace.App/    App, Views, ViewModels, Controls (treemap, donut, share bar), Services
 tests/                xUnit v3 tests (Microsoft.Testing.Platform)
@@ -180,6 +204,9 @@ branding/             icon source art (make-icon.ps1 and make-icns.py build the 
 3. MFT: handle a `$MFT` whose runlist spans extension records (currently falls back to the walker),
    overlap reads with parsing.
 4. Multi-select delete, hard-link de-duplication in the Windows walker, treemap search and highlighting.
+5. Linux fast scan for btrfs and XFS (today they are walked), and for ext4 with inline_data or bigalloc
+   (refused today, so they are walked too). A distribution package that installs `emmascan-helper` root-owned
+   with its own polkit action.
 
 ## Contributing and security
 

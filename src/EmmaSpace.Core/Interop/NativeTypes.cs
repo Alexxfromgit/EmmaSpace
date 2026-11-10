@@ -22,6 +22,8 @@ public enum ScanMode : uint
     Auto = 0,
     Walker = 1,
     Mft = 2,
+    /// <summary>ext2/3/4 inode tables read from the block device (Linux, root).</summary>
+    Ext4 = 3,
 }
 
 public enum ScanPhase : uint
@@ -30,6 +32,11 @@ public enum ScanPhase : uint
     Enumerating = 1,
     Finalizing = 2,
     Done = 3,
+    /// <summary>
+    /// App only, never sent by the engine: the Linux fast scan is waiting for pkexec to accept the administrator
+    /// password. <see cref="Scanning.HelperScanner"/> reports it, then <see cref="Starting"/> once the helper runs.
+    /// </summary>
+    WaitingForAuthorization = 0x100,
 }
 
 [StructLayout(LayoutKind.Sequential)]

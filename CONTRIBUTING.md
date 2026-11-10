@@ -8,7 +8,7 @@ You need the .NET 10 SDK (`global.json` pins the version), CMake ≥ 3.25 and a 
 
 - **Windows:** Visual Studio 2026 with *Desktop development with C++*.
 - **macOS:** Xcode command line tools and Ninja (`brew install cmake ninja`).
-- **Linux:** for example `sudo apt-get install -y build-essential cmake ninja-build libicu74`.
+- **Linux:** for example `sudo apt-get install -y build-essential cmake ninja-build libicu74 e2fsprogs` (mke2fs builds the ext4 test images).
 
 ```bash
 ./build.ps1 -Test          # Windows
