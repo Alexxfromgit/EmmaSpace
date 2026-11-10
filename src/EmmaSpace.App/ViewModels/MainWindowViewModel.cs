@@ -174,6 +174,12 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
     public partial int SelectedTabIndex { get; set; }
 
     // Scan progress
+    private const string MappingHeading = "Mapping your files…";
+
+    /// <summary>"Mapping your files…", or the wait for the administrator password before a Linux fast scan.</summary>
+    [ObservableProperty]
+    public partial string ProgressHeading { get; private set; } = MappingHeading;
+
     [ObservableProperty]
     public partial string ProgressFiles { get; private set; } = "";
 
@@ -357,9 +363,21 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
         _loadGeneration++; // a snapshot still loading must not replace this scan's result
         _scanCts = new CancellationTokenSource();
         ProgressFiles = ProgressBytes = ProgressPath = ProgressElapsed = "";
+        ProgressHeading = MappingHeading;
         var stopwatch = Stopwatch.StartNew();
         var progress = new Progress<ScanProgress>(p =>
         {
+            if (p.Phase == ScanPhase.WaitingForAuthorization)
+            {
+                ProgressHeading = "Waiting for administrator password…";
+                ProgressFiles = "Enter it in the system's password dialog to start the fast scan.";
+                return;
+            }
+            if (ProgressHeading != MappingHeading)
+            {
+                ProgressHeading = MappingHeading;
+                stopwatch.Restart(); // the time shown is the scan's, not the time spent typing the password
+            }
             ProgressFiles = $"{p.Files:N0} files · {p.Directories:N0} folders";
             ProgressBytes = ByteSize.Format(p.Bytes);
             ProgressPath = p.Phase == ScanPhase.Finalizing ? "Sorting and totalling…" : p.CurrentPath;

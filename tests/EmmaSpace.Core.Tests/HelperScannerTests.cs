@@ -73,8 +73,10 @@ public class HelperScannerTests
         var reports = new List<ScanProgress>();
         var result = await HelperProtocol.ReadAsync(stream, new ScannerTests.SyncProgress(reports), TestContext.Current.CancellationToken);
 
-        Assert.Equal([10UL, 20UL], reports.Select(r => r.Files));
-        Assert.Equal("Reading the file system's inode tables…", reports[0].CurrentPath);
+        // The header itself ends the wait for the password: the helper runs as root once it writes anything.
+        Assert.Equal(ScanPhase.Starting, reports[0].Phase);
+        Assert.Equal([0UL, 10UL, 20UL], reports.Select(r => r.Files));
+        Assert.Equal("Reading the file system's inode tables…", reports[1].CurrentPath);
         Assert.Equal(EsStatus.Ok, result.Status);
         Assert.Equal(ScanMode.Ext4, result.Mode);
         Assert.Equal(3u, result.Errors);
@@ -169,6 +171,11 @@ public class HelperScannerTests
         var reports = new List<ScanProgress>();
         using var viaHelper = await DirectScanner().ScanAsync(folder, new ScanOptions(), new ScannerTests.SyncProgress(reports), ct);
         using var native = await new NativeScanner().ScanAsync(folder, new ScanOptions(), null, ct);
+
+        // Waiting for the password first (pkexec), then the helper's own phases.
+        Assert.Equal(ScanPhase.WaitingForAuthorization, reports[0].Phase);
+        Assert.Equal(ScanPhase.Starting, reports[1].Phase);
+        Assert.DoesNotContain(reports.Skip(1), r => r.Phase == ScanPhase.WaitingForAuthorization);
 
         Assert.Equal(ScanSource.Native, viaHelper.Info.Source);
         Assert.Equal(native.Count, viaHelper.Count);

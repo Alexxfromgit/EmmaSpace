@@ -32,6 +32,11 @@ public enum ScanPhase : uint
     Enumerating = 1,
     Finalizing = 2,
     Done = 3,
+    /// <summary>
+    /// App only, never sent by the engine: the Linux fast scan is waiting for pkexec to accept the administrator
+    /// password. <see cref="Scanning.HelperScanner"/> reports it, then <see cref="Starting"/> once the helper runs.
+    /// </summary>
+    WaitingForAuthorization = 0x100,
 }
 
 [StructLayout(LayoutKind.Sequential)]

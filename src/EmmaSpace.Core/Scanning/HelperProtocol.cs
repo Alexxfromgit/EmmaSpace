@@ -32,6 +32,8 @@ internal static class HelperProtocol
         var nodeSize = BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(8));
         if (version != Version || nodeSize != (uint)Marshal.SizeOf<EsNode>())
             throw new InvalidDataException($"The fast scan helper speaks protocol {version} (node size {nodeSize}); expected {Version}.");
+        // The helper writes its header first thing, so it runs as root now: the password (if any) was accepted.
+        progress?.Report(new ScanProgress(0, 0, 0, 0, ScanPhase.Starting, ""));
 
         var type = new byte[1];
         var progressFields = new byte[40];

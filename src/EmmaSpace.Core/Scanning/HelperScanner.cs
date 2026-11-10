@@ -66,6 +66,8 @@ public sealed class HelperScanner : IScanner
         {
             throw new ScanException(EsStatus.NotSupported, $"Could not start the fast scan ({ex.Message}).");
         }
+        // pkexec asks for the password before the helper starts; its header (see HelperProtocol) ends the wait.
+        progress?.Report(new ScanProgress(0, 0, 0, 0, ScanPhase.WaitingForAuthorization, root));
 
         // stderr carries pkexec's and the helper's messages; keep the end of it for the error dialog.
         var errors = process.StandardError.ReadToEndAsync(CancellationToken.None);
