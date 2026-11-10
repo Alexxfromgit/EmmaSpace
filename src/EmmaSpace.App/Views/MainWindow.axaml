@@ -146,6 +146,17 @@
     </Border>
 
     <Panel>
+      <!-- Start page backdrop: Emma's painting, faint, filling the page behind the drives. It sits outside the
+           ScrollViewer, so it stays put while the drives scroll. UniformToFill keeps the art's shape at any window
+           size, cropping instead of squeezing: anchored top-left, a narrow window crops the empty right side of the
+           art and a wide one its bottom (the blanket), so Emma's face stays in view. -->
+      <Border IsVisible="{Binding IsHome}" Opacity="{DynamicResource EmmaBackdropOpacity}" IsHitTestVisible="False"
+              ClipToBounds="True">
+        <Border.Background>
+          <ImageBrush Source="avares://EmmaSpace/Assets/home-emma.jpg" Stretch="UniformToFill" AlignmentX="Left" AlignmentY="Top" />
+        </Border.Background>
+      </Border>
+
       <!-- Start page -->
       <ScrollViewer IsVisible="{Binding IsHome}">
         <StackPanel Margin="40,36" MaxWidth="1100" HorizontalAlignment="Center" Spacing="6">
