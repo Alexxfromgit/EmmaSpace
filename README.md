@@ -37,7 +37,8 @@ notes that in `~/.local/share/EmmaSpace/desktop-registration` (until then it tri
 start). Delete those files to undo it (they come back the next time the AppImage runs).
 
 Installed copies update themselves: Emma Space checks for a new release shortly after it starts
-and offers to restart into it (you can turn that off in the version menu in the status bar).
+and offers to restart into it (you can turn that off in Settings or in the version menu in the
+status bar).
 `SHA256SUMS.txt` on each release lists the checksums of every file. Until the builds are code
 signed, Windows SmartScreen asks you to confirm ("More info" → "Run anyway") and macOS needs
 right-click → Open the first time.
@@ -47,7 +48,7 @@ right-click → Open the first time.
 | Area | What you get |
 |---|---|
 | Scan | Drives or any folder; progress with live counts; cancel any time; links/junctions are not followed |
-| Fast scan | As administrator, whole NTFS drives are read straight from the master file table (C: with 5.8 M entries in ~8 s instead of minutes). On Linux, whole ext2/3/4 file systems are read straight from their inode tables through a small helper that runs as root (pkexec asks for your password; the app itself keeps running as you) |
+| Fast scan | As administrator, whole NTFS drives are read straight from the master file table (a system drive with 5.8 M entries in ~8 s instead of about a minute; see [Performance](#performance)). On Linux, whole ext2/3/4 file systems are read straight from their inode tables through a small helper that runs as root (pkexec asks for your password; the app itself keeps running as you) |
 | Cloud files | OneDrive and other cloud placeholders count only what is stored on this PC (marked ☁); unpopulated cloud folders are not listed, so scanning never triggers downloads |
 | Folder tree | Size, share of parent, size on disk, file count; huge folders page in 500 items at a time |
 | Treemap | Squarified layout with cushion shading, colour by file type, labels, click to select, double-click to zoom, breadcrumb to go back |
@@ -98,7 +99,10 @@ and are not entered, as on Windows. The AppImage copy belongs to the user, so ma
 user could swap it before pkexec starts it (as with anything run through sudo); pkexec itself is only taken
 from `/usr/bin` or `/bin`.
 
-Measured on this machine (full `C:\`, warm cache):
+### Performance
+
+Measured on a Windows 11 PC with an NVMe SSD, scanning the whole `C:\` system drive with a warm
+cache:
 
 | Scanner | Entries | Time | Notes |
 |---|---|---|---|
@@ -106,11 +110,11 @@ Measured on this machine (full `C:\`, warm cache):
 | Native walker | 5.2 M | ~56 s | bound by per-directory open cost; thread count barely matters |
 | Managed walker | 2.9 M¹ | ~50 s | ~3× the memory of the native walker |
 
-¹ measured before cloud folders were walked. MFT and walker trees were cross-checked: directory
-and file counts agree apart from files changing between passes, NTFS metafiles (`$MFT`, …) and
-folders the walker cannot open.
+¹ measured with an earlier version that did not yet walk cloud folders. MFT and walker trees were
+cross-checked: directory and file counts agree apart from files changing between passes, NTFS
+metafiles (`$MFT`, …) and folders the walker cannot open.
 
-On Linux (WSL 2, Ubuntu 24.04, ext4 root file system, as root):
+On Linux (Ubuntu 24.04 under WSL 2 on the same PC, ext4 root file system, run as root):
 
 | Scanner | Entries | Time | Notes |
 |---|---|---|---|
@@ -161,10 +165,10 @@ To rebuild the files of an existing release, run the *Release* workflow by hand 
 Windows and macOS code signing switch on automatically once their secrets are configured.
 
 To try an update locally, pack two versions into one folder with `vpk pack` and start the older
-installed app with `EMMASPACE_UPDATE_FEED=<that folder>`; `EMMASPACE_GITHUB_TOKEN` lets it read the
-releases of a private repository.
+installed app with `EMMASPACE_UPDATE_FEED=<that folder>`. For a fork kept private,
+`EMMASPACE_GITHUB_TOKEN` lets the app read that repository's releases.
 
-A plain `dotnet build` (or F5 in Rider) also builds the C++ engine through
+A plain `dotnet build` (or a build from Visual Studio or Rider) also builds the C++ engine through
 `build/Native.targets`, as long as `cmake` is on `PATH`. Pass `-p:EmmaSkipNative=true` to skip it.
 
 Tests:
@@ -194,11 +198,11 @@ branding/             icon source art (make-icon.ps1 and make-icns.py build the 
 
 ## Roadmap
 
-1. **Verify macOS** on a real Mac: the POSIX engine is verified on Linux (WSL Ubuntu 24.04: all
-   tests pass, and a scan of `/usr` matches `du`/`find` exactly in bytes, files, folders and hard
-   links), but the macOS-only parts (Trash, firmlink and `/System/Volumes` handling) are only
-   compiled by CI. Then `getattrlistbulk` for faster enumeration, Full Disk Access guidance, and a
-   signed, notarized `.app` via `vpk pack` on macOS.
+1. **Test macOS on real hardware**: the shared POSIX engine is tested on Linux (all tests pass, and
+   a scan of `/usr` matches `du`/`find` exactly in bytes, files, folders and hard links), but the
+   macOS-only parts (Trash, firmlink and `/System/Volumes` handling) are so far only compiled by CI,
+   not run on a Mac. After that: `getattrlistbulk` for faster enumeration, Full Disk Access
+   guidance, and a signed, notarized `.app` via `vpk pack` on macOS.
 2. **Code signing**: sign the Windows installer and sign and notarize the macOS app; the release
    workflow is ready for both.
 3. MFT: handle a `$MFT` whose runlist spans extension records (currently falls back to the walker),
