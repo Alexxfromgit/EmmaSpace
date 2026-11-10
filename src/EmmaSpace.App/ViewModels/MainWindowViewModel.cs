@@ -231,18 +231,21 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
             return;
         }
         var results = ResultsPath;
+        var resultsScanner = _resultsScanner; // with `results`: another scan may finish during the await below
         var match = results is null ? TypedPathMatch.Different : ScanPaths.Match(text, results);
         // Rescanning reads the results' own path exactly as it was scanned, so a folder that is gone is
         // reported as gone instead of quietly scanning a look-alike (e.g. "reports" for "reports ").
         if (match == TypedPathMatch.Same)
         {
-            await ScanPathAsync(results!, _resultsScanner);
+            await ScanPathAsync(results!, resultsScanner);
             return;
         }
         // Whether stray spaces are part of a folder's name is a question for the disk, which can be slow
         // to answer for a network share, so it is asked off the UI thread.
         var path = await Task.Run(() => TypedPath(text));
-        await ScanPathAsync(match == TypedPathMatch.SameIfTrimmed && path != text ? results! : path);
+        // Back to the results' own folder (the typed spaces were stray): rescan it the way it was scanned.
+        var rescan = match == TypedPathMatch.SameIfTrimmed && path != text;
+        await ScanPathAsync(rescan ? results! : path, rescan ? resultsScanner : null);
     }
 
     // Stray spaces around typed text are dropped, unless the folder's name really has them
@@ -273,14 +276,35 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
     [RelayCommand]
     private async Task FastScanAsync()
     {
-        var path = Tree?.RootPath ?? (string.IsNullOrWhiteSpace(PathText) ? null : TypedPath(PathText));
+        // Both the typed-path check and the mount lookup (realpath, statx) can block on a sleeping disk or a dead
+        // network mount, so they run off the UI thread.
+        // The window stays usable meanwhile, so if a scan starts or other results appear before they answer, this
+        // click no longer applies and is dropped.
+        var resultsRoot = Tree?.RootPath;
+        var typed = PathText;
+        bool Stale() => IsScanning || Tree?.RootPath != resultsRoot;
+        var path = resultsRoot ?? (string.IsNullOrWhiteSpace(typed) ? null : await Task.Run(() => TypedPath(typed)));
+        if (Stale()) return;
         if (_elevation.ScansThroughHelper)
         {
             // The fast scan reads a whole ext2/3/4 file system at once. Elsewhere running as root gains nothing, so
             // say so instead of asking for a password; for a subfolder, offer the file system that holds it.
             path ??= "/";
             const string password = "\n\nYour system will ask for your password. Emma Space itself keeps running as you.";
-            var mount = LinuxMounts.Find(path);
+            var lookup = path;
+            MountedFileSystem? mount;
+            var finding = Task.Run(() => LinuxMounts.Find(lookup));
+            _ = finding.ContinueWith(t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted); // if we stop waiting
+            try
+            {
+                // A dead network mount can keep the lookup waiting for good; then go on without knowing the file system.
+                mount = await finding.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            catch (TimeoutException)
+            {
+                mount = null;
+            }
+            if (Stale()) return;
             if (mount is { IsExt: false })
             {
                 await _dialogs.ShowErrorAsync("Fast scan",

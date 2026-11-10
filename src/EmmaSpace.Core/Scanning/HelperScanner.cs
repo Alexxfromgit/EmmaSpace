@@ -73,11 +73,13 @@ public sealed class HelperScanner : IScanner
 
         // Any byte on stdin cancels the helper: once it runs as root, the user cannot kill it. While pkexec still waits
         // for the password it runs with the user's real uid and can be killed, which also closes the password dialog.
-        // The callback runs on the thread that cancels (the UI), so nothing may escape it, and the write must not race
-        // with closing stdin below.
+        // It runs on the thread that cancels (the UI), so nothing may escape it, and the write must not race with
+        // closing stdin below. It is called from the token callback and again when the read below sees the cancel:
+        // a token runs its newest callback first, so the read's own cancellation can resume this method and dispose
+        // the registration before the callback ran. Signalling twice is harmless.
         var stdinLock = new object();
         var stdinClosed = false;
-        await using var registration = cancellationToken.Register(() =>
+        void SignalCancel()
         {
             lock (stdinLock)
             {
@@ -103,17 +105,27 @@ public sealed class HelperScanner : IScanner
             {
                 // the helper runs as root by now (EPERM), or it has finished
             }
-        });
+        }
+        await using var registration = cancellationToken.Register(SignalCancel);
 
         HelperResult? result = null;
         InvalidDataException? broken = null;
+        // Reading honours the caller's token: a large result, or a helper blocked reading the disk, must not keep
+        // Cancel waiting. WaitAsync releases us even if a pipe read ignores the token; the read then ends with an
+        // error once the pipe is closed below, which is observed here so it does not go unnoticed.
+        var reading = HelperProtocol.ReadAsync(process.StandardOutput.BaseStream, progress, cancellationToken);
+        _ = reading.ContinueWith(t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
         try
         {
-            result = await HelperProtocol.ReadAsync(process.StandardOutput.BaseStream, progress, CancellationToken.None);
+            result = await reading.WaitAsync(cancellationToken);
         }
         catch (InvalidDataException ex)
         {
             broken = ex;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            SignalCancel(); // the token callback may not have run yet (see SignalCancel); the rest follows below
         }
         finally
         {
@@ -133,6 +145,10 @@ public sealed class HelperScanner : IScanner
             // never see the cancel. Closing our end makes its write fail, so it exits.
             process.StandardOutput.Close();
         }
+
+        // Cancelled before the result arrived: the helper has been told (stdin) and its pipes are closed, so it stops
+        // and exits on its own. Waiting for that would only keep the caller.
+        if (result is null && cancellationToken.IsCancellationRequested) throw new OperationCanceledException(cancellationToken);
 
         // The helper exits right after its result, except when a part that cannot be interrupted is still running: a
         // cancelled scan may be stuck in syncfs(), and the process cannot end before that returns. So with a result, or

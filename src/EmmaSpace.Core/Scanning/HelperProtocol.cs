@@ -75,7 +75,7 @@ internal static class HelperProtocol
                     await FillArray(stream, nodes, ct);
                     var names = new char[namesLength];
                     await FillArray(stream, names, ct);
-                    if (status == EsStatus.Ok) Validate(nodes, names.Length);
+                    if (status == EsStatus.Ok) Validate(nodes, names);
                     return new HelperResult(status, mode, errors, elapsed, nodes, names);
                 }
                 default:
@@ -88,7 +88,7 @@ internal static class HelperProtocol
     /// The result must be a tree: every node but the root reached exactly once from its parent's child list,
     /// children after their parent, names inside the pool. Then a damaged stream cannot crash or hang the views.
     /// </summary>
-    internal static void Validate(ReadOnlySpan<EsNode> nodes, int namesLength)
+    internal static void Validate(ReadOnlySpan<EsNode> nodes, ReadOnlySpan<char> names)
     {
         var count = (uint)nodes.Length;
         if (count == 0 || nodes[0].Parent != EsNode.None) throw Damaged(0);
@@ -96,7 +96,14 @@ internal static class HelperProtocol
         for (var i = 0u; i < count; i++)
         {
             ref readonly var n = ref nodes[(int)i];
-            if ((ulong)n.NameOffset + n.NameLength > (ulong)namesLength) throw Damaged(i);
+            if ((ulong)n.NameOffset + n.NameLength > (ulong)names.Length) throw Damaged(i);
+            // Paths are built by joining names, so below the root each must be one component: never empty, "." or
+            // "..", and without "/" or NUL; otherwise opening or trashing it could reach outside the scanned folder.
+            if (i > 0)
+            {
+                var name = names.Slice((int)n.NameOffset, n.NameLength);
+                if (name.IsEmpty || name is "." or ".." || name.ContainsAny('/', '\0')) throw Damaged(i);
+            }
             if (i > 0 && (n.Parent >= i || !reached[i])) throw Damaged(i);
             for (var c = n.FirstChild; c != EsNode.None; c = nodes[(int)c].NextSibling)
             {

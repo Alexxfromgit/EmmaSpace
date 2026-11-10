@@ -19,13 +19,17 @@ inline void append_utf8_as_utf16(std::string_view s, std::u16string& out) {
         else if ((c >> 4) == 0xE) { cp = c & 0x0F; n = 3; }
         else if ((c >> 3) == 0x1E) { cp = c & 0x07; n = 4; }
         else { out.push_back(u'�'); ++i; continue; }
-        if (i + n > s.size()) { out.push_back(u'�'); break; }
-        bool ok = true;
-        for (size_t k = 1; k < n; ++k) {
+        bool ok = i + n <= s.size();
+        for (size_t k = 1; ok && k < n; ++k) {
             const auto cc = static_cast<unsigned char>(s[i + k]);
-            if ((cc >> 6) != 0x2) { ok = false; break; }
-            cp = (cp << 6) | (cc & 0x3F);
+            if ((cc >> 6) != 0x2) ok = false;
+            else cp = (cp << 6) | (cc & 0x3F);
         }
+        // Only the shortest encoding of a scalar value is valid. Overlong forms (C0 AE would read as ".",
+        // C0 AF as "/"), surrogates and values past U+10FFFF become U+FFFD, one per byte, so a name can
+        // never turn into a different path component.
+        static constexpr uint32_t kMinForLength[5] = {0, 0, 0x80, 0x800, 0x10000};
+        if (ok && (cp < kMinForLength[n] || (cp >= 0xD800 && cp <= 0xDFFF) || cp > 0x10FFFF)) ok = false;
         if (!ok) { out.push_back(u'�'); ++i; continue; }
         if (cp >= 0x10000) {
             cp -= 0x10000;

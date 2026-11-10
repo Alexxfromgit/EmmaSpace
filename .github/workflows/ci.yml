@@ -88,7 +88,8 @@ jobs:
       # Runners have passwordless sudo and loop devices: scan a loop-mounted ext4 image from its block device.
       - name: Native ext4 test as root (Linux)
         if: matrix.test && runner.os == 'Linux'
-        run: sudo artifacts/native-build/ci/native/emmascan/tests/emmascan_tests "ext4: as root a loop-mounted image scanned in ext4 mode equals the walker exactly"
+        run: |
+          sudo artifacts/native-build/ci/native/emmascan/tests/emmascan_tests "ext4: as root a loop-mounted image scanned in ext4 mode equals the walker exactly"
 
       - name: Build .NET
         run: dotnet build EmmaSpace.slnx -c Release -p:EmmaSkipNative=true

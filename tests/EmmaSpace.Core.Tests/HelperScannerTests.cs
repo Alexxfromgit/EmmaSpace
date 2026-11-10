@@ -128,17 +128,25 @@ public class HelperScannerTests
     {
         var cycle = TwoNodes();
         cycle[1].NextSibling = 1; // a sibling list that loops
-        Assert.Throws<InvalidDataException>(() => HelperProtocol.Validate(cycle, 2));
+        Assert.Throws<InvalidDataException>(() => HelperProtocol.Validate(cycle, "/a"));
 
         var outside = TwoNodes();
         outside[1].NameOffset = 5; // name past the pool
-        Assert.Throws<InvalidDataException>(() => HelperProtocol.Validate(outside, 2));
+        Assert.Throws<InvalidDataException>(() => HelperProtocol.Validate(outside, "/a"));
 
         var orphan = TwoNodes();
         orphan[0].FirstChild = EsNode.None; // node 1 is unreachable
-        Assert.Throws<InvalidDataException>(() => HelperProtocol.Validate(orphan, 2));
+        Assert.Throws<InvalidDataException>(() => HelperProtocol.Validate(orphan, "/a"));
 
-        HelperProtocol.Validate(TwoNodes(), 2);
+        HelperProtocol.Validate(TwoNodes(), "/a");
+
+        // Names below the root must be single path components (a crafted entry must not lead outside the folder).
+        foreach (var bad in new[] { "..", ".", "a/b", "", "x\0y" })
+        {
+            var named = TwoNodes();
+            named[1].NameLength = (ushort)bad.Length;
+            Assert.Throws<InvalidDataException>(() => HelperProtocol.Validate(named, "/" + bad));
+        }
     }
 
     // ---- The real helper, started directly instead of through pkexec (as the user, so it walks)
@@ -197,6 +205,64 @@ public class HelperScannerTests
         }
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => scan);
         Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(10), $"took {stopwatch.Elapsed} to stop");
+    }
+
+    [Fact]
+    public async Task Cancel_kills_a_launcher_that_is_still_waiting()
+    {
+        // Stands in for pkexec at its password prompt: no output, ignores stdin, still killable by the user.
+        // Cancel must end it (that closes the dialog), not only write to its stdin.
+        Assert.SkipUnless(OperatingSystem.IsLinux() && HelperScanner.BundledHelperPath is not null,
+            "The helper is built on Linux only.");
+        var dir = Directory.CreateTempSubdirectory("emmaspace-kill-");
+        try
+        {
+            var pidFile = Path.Combine(dir.FullName, "pid");
+            var scanner = new HelperScanner((_, _) =>
+            {
+                var start = new ProcessStartInfo("/bin/sh");
+                start.ArgumentList.Add("-c");
+                start.ArgumentList.Add("echo $$ > \"$0\"; exec sleep 60");
+                start.ArgumentList.Add(pidFile);
+                return start;
+            });
+            using var cts = new CancellationTokenSource();
+            var scan = scanner.ScanAsync("/", new ScanOptions(), null, cts.Token);
+            var deadline = DateTime.UtcNow.AddSeconds(10);
+            while (!File.Exists(pidFile) || new FileInfo(pidFile).Length == 0)
+            {
+                Assert.True(DateTime.UtcNow < deadline, "the stand-in never started");
+                await Task.Delay(20, TestContext.Current.CancellationToken);
+            }
+            var pid = int.Parse(File.ReadAllText(pidFile).Trim());
+            cts.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => scan);
+
+            deadline = DateTime.UtcNow.AddSeconds(5);
+            while (IsAlive(pid))
+            {
+                Assert.True(DateTime.UtcNow < deadline, $"process {pid} still runs after Cancel");
+                await Task.Delay(20, TestContext.Current.CancellationToken);
+            }
+        }
+        finally
+        {
+            dir.Delete(recursive: true);
+        }
+
+        // Gone, or a zombie waiting to be reaped.
+        static bool IsAlive(int pid)
+        {
+            try
+            {
+                var stat = File.ReadAllText($"/proc/{pid}/stat");
+                return stat[(stat.LastIndexOf(')') + 2)..][0] != 'Z';
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return false;
+            }
+        }
     }
 
     [Fact]

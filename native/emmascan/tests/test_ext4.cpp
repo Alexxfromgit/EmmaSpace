@@ -108,6 +108,40 @@ TEST_CASE("ext4: a damaged directory block stops parsing without reading past th
     CHECK_FALSE(ok);
 }
 
+TEST_CASE("ext4: entries whose name is not one path component are dropped and the block reported") {
+    std::vector<uint8_t> block(1024, 0);
+    uint32_t pos = add_entry(block, 0, 12, "ok", 12);
+    pos = add_entry(block, pos, 13, "../victim", 20); // a crafted name must not lead out of the folder
+    pos = add_entry(block, pos, 14, std::string_view("nul\0x", 5), 16);
+    pos = add_entry(block, pos, 15, "after", 1024 - pos);
+    bool ok = true;
+    const auto entries = entries_of(block, &ok);
+    CHECK_FALSE(ok);
+    REQUIRE(entries.size() == 2);
+    CHECK(entries[0].second == "ok");
+    CHECK(entries[1].second == "after"); // later entries still count
+
+    // Without the filetype feature the name length has 16 bits; more than 255 bytes is invalid.
+    std::vector<uint8_t> wide(1024, 0);
+    put32(&wide[0], 12);
+    put16(&wide[4], 1024);
+    put16(&wide[6], 300);
+    std::memset(&wide[8], 'a', 300);
+    size_t seen = 0;
+    CHECK_FALSE(ext4::parse_dir_block(wide.data(), 1024, false, [&](uint32_t, std::string_view) { ++seen; }));
+    CHECK(seen == 0);
+}
+
+TEST_CASE("utf8: only shortest-form scalar values decode; everything else is U+FFFD per byte") {
+    CHECK(utf8_to_utf16("\xC0\xAE\xC0\xAE") == u"����"); // overlong "..": never a dot
+    CHECK(utf8_to_utf16("\xC0\xAF") == u"��");                     // overlong "/"
+    CHECK(utf8_to_utf16("\xE0\x80\xAF") == u"���");           // overlong "/", 3 bytes
+    CHECK(utf8_to_utf16("\xED\xA0\x80") == u"���");           // a surrogate
+    CHECK(utf8_to_utf16("\xF4\x90\x80\x80") == u"����"); // past U+10FFFF
+    CHECK(utf8_to_utf16("a\xC3") == u"a�");                             // cut short
+    CHECK(utf8_to_utf16("\xC3\xBC\xE2\x82\xAC\xF0\x9F\x98\x80") == u"ü€\U0001F600"); // valid: ü € 😀
+}
+
 TEST_CASE("ext4: superblock checks") {
     std::vector<uint8_t> sb(1024, 0);
     put32(&sb[0x00], 8192);  // inodes

@@ -101,7 +101,8 @@ constexpr uint32_t kFlagCasefold = 0x40000000;
 bool parse_inode(const uint8_t* data, const Superblock& sb, Inode& out);
 
 // Visits each directory entry of one directory block: fn(child_inode, name). Returns false if the
-// block is malformed (entries seen before the damage are still reported). "." and ".." are skipped.
+// block is malformed (entries seen before the damage are still reported) or holds an entry whose name
+// is not a valid path component (it is skipped). "." and ".." are skipped.
 template <class Fn>
 bool parse_dir_block(const uint8_t* block, uint32_t block_size, bool has_filetype, Fn&& fn);
 
@@ -182,6 +183,7 @@ private:
 template <class Fn>
 bool parse_dir_block(const uint8_t* block, uint32_t block_size, bool has_filetype, Fn&& fn) {
     uint32_t pos = 0;
+    bool valid = true;
     while (pos + 8 <= block_size) {
         const uint8_t* d = block + pos;
         const uint32_t ino = static_cast<uint32_t>(d[0]) | (static_cast<uint32_t>(d[1]) << 8) |
@@ -193,11 +195,16 @@ bool parse_dir_block(const uint8_t* block, uint32_t block_size, bool has_filetyp
         if (rec_len < 8 || (rec_len & 3) != 0 || rec_len > block_size - pos || name_len + 8 > rec_len) return false;
         if (ino != 0 && name_len > 0) {
             const std::string_view name(reinterpret_cast<const char*>(d + 8), name_len);
-            if (name != "." && name != "..") fn(ino, name);
+            // A name is one path component: never "/" or NUL inside, at most 255 bytes (EXT4_NAME_LEN). Anything
+            // else is damage or a crafted entry; passing it on would let a path built from it leave the folder.
+            if (name_len > 255 || name.find('/') != std::string_view::npos || name.find('\0') != std::string_view::npos)
+                valid = false;
+            else if (name != "." && name != "..")
+                fn(ino, name);
         }
         pos += rec_len;
     }
-    return pos == block_size;
+    return valid && pos == block_size;
 }
 
 } // namespace emmascan::ext4
