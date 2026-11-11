@@ -82,6 +82,8 @@ typedef enum es_scan_phase {
                                    `allocated` counts only what they own alone */
 #define ES_NODE_CLONE_SHARED 0x100u /* one of those other pure clones: its data is counted on another
                                    node of the same clone family, so it keeps no copy of its own */
+#define ES_NODE_CLONE_HOLDER 0x200u /* that first pure clone of a family, which counts the shared data.
+                                   A clone with neither bit was changed since, or its share is unknown */
 
 typedef struct es_scan_options {
     uint32_t struct_size;     /* sizeof(es_scan_options) */

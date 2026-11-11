@@ -253,9 +253,13 @@ private:
             // first one seen holds them, the others count only what they own alone (usually nothing).
             if (S_ISREG(st.st_mode) && clone.may_share && !(e.flags & ES_NODE_HARDLINK)) {
                 e.flags |= ES_NODE_CLONE;
-                if (clone.pure && !first_clone({st.st_dev, static_cast<ino_t>(clone.id)})) {
-                    e.flags |= ES_NODE_CLONE_SHARED;
-                    e.allocated = std::min(e.allocated, clone.own_size);
+                if (clone.pure) {
+                    if (first_clone({st.st_dev, static_cast<ino_t>(clone.id)})) {
+                        e.flags |= ES_NODE_CLONE_HOLDER;
+                    } else {
+                        e.flags |= ES_NODE_CLONE_SHARED;
+                        e.allocated = std::min(e.allocated, clone.own_size);
+                    }
                 }
             }
             s.bytes += e.size;
