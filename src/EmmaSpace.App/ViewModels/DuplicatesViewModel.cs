@@ -22,8 +22,12 @@ public sealed partial class DuplicateGroupViewModel : ObservableObject
     public ulong FileSize { get; }
     public string Name { get; }
     public ObservableCollection<NodeItemViewModel> Files { get; } = [];
+    // Clones that held their family's data and were moved to the bin since the search; see CountHolders.
+    private int _removedCloneHolders;
+
     public ulong Wasted => Files.Count > 1
-        ? DuplicateGroup.Reclaimable(FileSize, DuplicateGroup.CountHolders(Files[0].Tree, Files.Select(f => f.Node)))
+        ? DuplicateGroup.Reclaimable(FileSize,
+            DuplicateGroup.CountHolders(Files[0].Tree, Files.Select(f => f.Node), _removedCloneHolders))
         : 0;
     public string SizeText => ByteSize.Format(FileSize);
     public string CountText => Files.Count.ToString(CultureInfo.CurrentCulture) + " copies";
@@ -32,7 +36,11 @@ public sealed partial class DuplicateGroupViewModel : ObservableObject
     public void RemoveDeleted()
     {
         for (var i = Files.Count - 1; i >= 0; i--)
-            if (Files[i].IsDeleted) Files.RemoveAt(i);
+        {
+            if (!Files[i].IsDeleted) continue;
+            if (DuplicateGroup.IsCloneHolder(Files[i].Tree.Nodes[Files[i].Node].Flags)) _removedCloneHolders++;
+            Files.RemoveAt(i);
+        }
         OnPropertyChanged(nameof(CountText));
         OnPropertyChanged(nameof(WastedText));
         OnPropertyChanged(nameof(Wasted));

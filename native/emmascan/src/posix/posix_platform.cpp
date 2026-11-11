@@ -253,8 +253,10 @@ private:
             // first one seen holds them, the others count only what they own alone (usually nothing).
             if (S_ISREG(st.st_mode) && clone.may_share && !(e.flags & ES_NODE_HARDLINK)) {
                 e.flags |= ES_NODE_CLONE;
-                if (clone.pure && !first_clone({st.st_dev, static_cast<ino_t>(clone.id)}))
+                if (clone.pure && !first_clone({st.st_dev, static_cast<ino_t>(clone.id)})) {
+                    e.flags |= ES_NODE_CLONE_SHARED;
                     e.allocated = std::min(e.allocated, clone.own_size);
+                }
             }
             s.bytes += e.size;
             ++s.files;
@@ -363,13 +365,16 @@ private:
         CloneInfo clone;
         if (!ask_stat && r.may_share_blocks()) {
             clone.may_share = true;
-            clone.pure = r.is_pure_clone();
             clone.id = r.clone_id;
             // The clone id names the data stream; a resource fork or extended attributes are the file's own.
-            if (r.ext & bulk::kExtPrivateSize)
+            // Without a size for those, the clone keeps its whole allocation rather than losing them.
+            if (r.ext & bulk::kExtPrivateSize) {
+                clone.pure = r.is_pure_clone();
                 clone.own_size = static_cast<uint64_t>(std::max<int64_t>(r.private_size, 0));
-            else if (r.file & bulk::kFileDataAllocSize)
+            } else if (r.file & bulk::kFileDataAllocSize) {
+                clone.pure = r.is_pure_clone();
                 clone.own_size = static_cast<uint64_t>(std::max<int64_t>(r.alloc_size - r.data_alloc_size, 0));
+            }
         }
         add_entry(item, name, st, trigger, s, clone);
     }
