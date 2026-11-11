@@ -21,7 +21,8 @@ public readonly record struct StorageLocation(StorageKind Kind, ulong Device);
 /// <summary>
 /// Identity and times of an open file (see <c>es_file_stamp</c>): two stamps that are equal in every
 /// field describe the same file, unchanged, provided the stamp is <see cref="Trusted"/>: one that every
-/// change of the content moves on and no program can move back. That is the change time on Linux and
+/// change of the content moves on (in the file system's time steps: see
+/// <see cref="Analysis.DuplicateFinder.CompareSettleTime"/>) and no program can move back. That is the change time on Linux and
 /// macOS (only the kernel sets it); on Windows programs can set every time back, ChangeTime included,
 /// so only a stamp with the file's change-journal number (<see cref="Usn"/>) is trusted there.
 /// </summary>

@@ -32,8 +32,10 @@ public sealed partial class DuplicateGroupViewModel : ObservableObject
         public Task CopyPathAsync(int node) => inner.CopyPathAsync(node);
         public void ShowInTree(int node) => inner.ShowInTree(node);
         public void ShowInTreemap(int node) => inner.ShowInTreemap(node);
-        public Task MoveToTrashAsync(int node) => inner.MoveDuplicateToTrashAsync(node, group.Files.Select(f => f.Node).ToList());
-        public Task MoveDuplicateToTrashAsync(int node, IReadOnlyList<int> copies) => inner.MoveDuplicateToTrashAsync(node, copies);
+        public Task MoveToTrashAsync(FileTree tree, int node) =>
+            inner.MoveDuplicateToTrashAsync(tree, node, group.Files.Select(f => f.Node).ToList());
+        public Task MoveDuplicateToTrashAsync(FileTree tree, int node, IReadOnlyList<int> copies) =>
+            inner.MoveDuplicateToTrashAsync(tree, node, copies);
         public void ShowProperties(int node) => inner.ShowProperties(node);
     }
 

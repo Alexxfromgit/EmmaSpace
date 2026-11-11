@@ -521,9 +521,12 @@ public partial class DuplicateSearchTests
         var variant = Path.Combine(temp.Root, "d", "variant.bin");
         var two = Path.Combine(temp.Root, "b", "two.bin");
 
-        Assert.Null(await DuplicateFinder.FindIdenticalCopyAsync(one, Big, [inBin, variant], null, ct));
+        Assert.Null((await DuplicateFinder.FindIdenticalCopyAsync(one, Big, [inBin, variant], null, ct)).Match);
         var progress = new Collect<double>();
-        Assert.Equal(two, await DuplicateFinder.FindIdenticalCopyAsync(one, Big, [inBin, variant, two], progress, ct));
+        var found = await DuplicateFinder.FindIdenticalCopyAsync(one, Big, [inBin, variant, two], progress, ct);
+        Assert.Equal(two, found.Match);
+        Assert.False(found.InUse);
+        Assert.True(DuplicateFinder.IsStillTheMatch(two, found.MatchStamp));
         Assert.All(progress.Reports, p => Assert.InRange(p, 0, 1));
     }
 
@@ -535,9 +538,8 @@ public partial class DuplicateSearchTests
         var ct = TestContext.Current.CancellationToken;
         var one = Path.Combine(temp.Root, "a", "one.bin");
         var two = Path.Combine(temp.Root, "b", "two.bin");
-        // Linux moves file times on in steps of a clock tick: let one pass since the files were written.
-        await Task.Delay(50, ct);
-
+        // No pause after writing the files: the check itself waits until their last change is old enough for any
+        // write to move the change time on (Linux keeps it in steps of a clock tick).
         var written = false;
         var identical = await DuplicateFinder.AreIdenticalAsync(one, two, Big, ct, _ =>
         {
@@ -557,6 +559,24 @@ public partial class DuplicateSearchTests
 
         Assert.Equal(!written, identical);
         if (!OperatingSystem.IsWindows()) Assert.True(written);
+    }
+
+    [Fact]
+    public async Task A_different_file_moved_in_place_of_the_match_is_not_taken_for_it()
+    {
+        RequireComparableFiles();
+        using var temp = Files(out var content);
+        var ct = TestContext.Current.CancellationToken;
+        var one = Path.Combine(temp.Root, "a", "one.bin");
+        var two = Path.Combine(temp.Root, "b", "two.bin");
+        var found = await DuplicateFinder.FindIdenticalCopyAsync(one, Big, [two], null, ct);
+        Assert.Equal(two, found.Match);
+
+        // Same name and content, but another file: the one that was compared is gone.
+        var other = temp.File("other.bin", content);
+        File.Move(other, two, overwrite: true);
+        Assert.Equal(!NativeEngine.IsAvailable, DuplicateFinder.IsStillTheMatch(two, found.MatchStamp));
+        Assert.False(DuplicateFinder.IsStillTheMatch(Path.Combine(temp.Root, "missing.bin"), found.MatchStamp));
     }
 
     [Fact]

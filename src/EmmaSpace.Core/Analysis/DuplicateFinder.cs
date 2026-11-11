@@ -31,6 +31,12 @@ public sealed record DuplicateResult(ulong MinSize, IReadOnlyList<DuplicateGroup
 public readonly record struct DuplicateProgress(string Stage, long Done, long Total, long BytesDone = 0, long BytesTotal = 0);
 
 /// <summary>
+/// What <see cref="DuplicateFinder.FindIdenticalCopyAsync"/> found: the identical copy and its stamp at the end of the
+/// comparison, or none, and whether a copy could not be compared because another program has it open for writing.
+/// </summary>
+public sealed record IdenticalCopyCheck(string? Match, FileStamp? MatchStamp, bool InUse);
+
+/// <summary>
 /// Finds identical files in three passes so most files are never read in full:
 /// group by size → hash the first and last 64 KiB → hash the whole file.
 /// How many files are read at once depends on the storage: many on an SSD, few on a hard disk
@@ -282,22 +288,23 @@ public static class DuplicateFinder
 
     /// <summary>
     /// The first of <paramref name="copies"/> whose content is identical to the file at <paramref name="path"/>,
-    /// compared byte by byte now; null if none is. Copies in a Recycle Bin or Trash folder don't count:
-    /// they are on their way out. Used before a copy is moved to the Trash, since the search may be old
+    /// compared byte by byte now (see <see cref="AreIdenticalAsync"/>). Copies in a Recycle Bin or Trash folder don't
+    /// count: they are on their way out. Used before a copy is moved to the Trash, since the search may be old
     /// (or come from a snapshot) and the files may have changed since. <paramref name="progress"/> gets
     /// the share compared so far, from 0 to 1. Throws <see cref="OperationCanceledException"/> when cancelled.
     /// </summary>
-    public static async Task<string?> FindIdenticalCopyAsync(string path, ulong size, IEnumerable<string> copies,
+    public static async Task<IdenticalCopyCheck> FindIdenticalCopyAsync(string path, ulong size, IEnumerable<string> copies,
         IProgress<double>? progress = null, CancellationToken ct = default)
     {
         var candidates = copies.Where(c => !TrashFolders.Contains(c)).ToList();
         var total = Math.Max(1.0, (double)size * candidates.Count);
         double done = 0;
         var lastReport = Environment.TickCount64;
+        var inUse = false;
         foreach (var copy in candidates)
         {
             var start = done;
-            var identical = await AreIdenticalAsync(path, copy, size, ct, bytes =>
+            var (result, stamp) = await CompareAsync(path, copy, size, ct, bytes =>
             {
                 done += bytes;
                 var now = Environment.TickCount64;
@@ -305,22 +312,54 @@ public static class DuplicateFinder
                 lastReport = now;
                 progress?.Report(Math.Min(1, done / total));
             });
-            if (identical) return copy;
+            if (result == Comparison.Identical) return new IdenticalCopyCheck(copy, stamp, InUse: false);
+            inUse |= result == Comparison.InUse;
             done = start + size;
         }
-        return null;
+        return new IdenticalCopyCheck(null, null, inUse);
+    }
+
+    /// <summary>
+    /// Whether the file at <paramref name="path"/> is still the one a check matched: the same file, unchanged, when the
+    /// check had its stamp, or at least a file of that name when it hadn't. Another program could have moved a
+    /// different file there since.
+    /// </summary>
+    public static bool IsStillTheMatch(string path, FileStamp? stamp)
+    {
+        if (stamp is null) return File.Exists(path);
+        try
+        {
+            using var handle = File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            return StorageInfo.GetStamp(handle) == stamp;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
     }
 
     /// <summary>
     /// Whether two files have exactly the same content, compared byte by byte now (no hashes, no cache).
     /// False if either can't be read or is not <paramref name="expectedSize"/> bytes long, and false when it can't be
     /// told that neither changed during the comparison: a write to a part already compared would go unseen.
-    /// Windows keeps writers out while the files are open; elsewhere each file's stamp must be trusted (the
-    /// change time, which every write moves on) and the same before and after.
+    /// Windows keeps writers out while the files are open. Elsewhere each file's stamp must be trusted (the change
+    /// time) and the same before and after. File systems keep that time in steps (up to 2 s on FAT), so a file
+    /// changed less than <see cref="CompareSettleTime"/> ago is first left to settle, and any later write then moves it.
+    /// Writes the kernel only learns of later (through a memory map, or from another computer on a network drive)
+    /// can still go unnoticed.
     /// <paramref name="onCompared"/> gets the bytes of each file compared after every step.
     /// </summary>
     public static async Task<bool> AreIdenticalAsync(string first, string second, ulong expectedSize, CancellationToken ct = default,
-        Action<long>? onCompared = null)
+        Action<long>? onCompared = null) =>
+        (await CompareAsync(first, second, expectedSize, ct, onCompared)).Result == Comparison.Identical;
+
+    /// <summary>How long ago a file must have last changed before its change time shows every later write.</summary>
+    public static readonly TimeSpan CompareSettleTime = TimeSpan.FromSeconds(2);
+
+    private enum Comparison { Identical, Different, InUse }
+
+    private static async Task<(Comparison Result, FileStamp? SecondStamp)> CompareAsync(string first, string second,
+        ulong expectedSize, CancellationToken ct, Action<long>? onCompared)
     {
         var a = ArrayPool<byte>.Shared.Rent(FullBufferSize);
         var b = ArrayPool<byte>.Shared.Rent(FullBufferSize);
@@ -329,32 +368,63 @@ public static class DuplicateFinder
             using var left = OpenForComparison(first);
             using var right = OpenForComparison(second);
             if ((ulong)RandomAccess.GetLength(left) != expectedSize || (ulong)RandomAccess.GetLength(right) != expectedSize)
-                return false;
+                return (Comparison.Different, null);
             var leftBefore = StorageInfo.GetStamp(left);
             var rightBefore = StorageInfo.GetStamp(right);
+            if (!OperatingSystem.IsWindows())
+            {
+                var wait = Max(UnsettledFor(leftBefore), UnsettledFor(rightBefore));
+                if (wait > TimeSpan.Zero)
+                {
+                    await Task.Delay(wait, ct);
+                    if (StorageInfo.GetStamp(left) != leftBefore || StorageInfo.GetStamp(right) != rightBefore)
+                        return (Comparison.Different, null); // being written to right now
+                }
+            }
             long offset = 0;
             while (true)
             {
                 var readLeft = await ReadFullyAsync(left, a.AsMemory(0, FullBufferSize), offset, ct);
                 var readRight = await ReadFullyAsync(right, b.AsMemory(0, FullBufferSize), offset, ct);
-                if (readLeft != readRight || !a.AsSpan(0, readLeft).SequenceEqual(b.AsSpan(0, readRight))) return false;
+                if (readLeft != readRight || !a.AsSpan(0, readLeft).SequenceEqual(b.AsSpan(0, readRight)))
+                    return (Comparison.Different, null);
                 if (readLeft == 0) break;
                 offset += readLeft;
                 onCompared?.Invoke(readLeft);
             }
-            return (ulong)offset == expectedSize &&
-                   (ulong)RandomAccess.GetLength(left) == expectedSize && (ulong)RandomAccess.GetLength(right) == expectedSize &&
-                   Unchanged(leftBefore, StorageInfo.GetStamp(left)) && Unchanged(rightBefore, StorageInfo.GetStamp(right));
+            var rightAfter = StorageInfo.GetStamp(right);
+            var same = (ulong)offset == expectedSize &&
+                       (ulong)RandomAccess.GetLength(left) == expectedSize && (ulong)RandomAccess.GetLength(right) == expectedSize &&
+                       Unchanged(leftBefore, StorageInfo.GetStamp(left)) && Unchanged(rightBefore, rightAfter);
+            return same ? (Comparison.Identical, rightAfter) : (Comparison.Different, null);
+        }
+        catch (IOException ex) when (OperatingSystem.IsWindows() && (ex.HResult & 0xFFFF) is ErrorSharingViolation or ErrorLockViolation)
+        {
+            return (Comparison.InUse, null); // open for writing in another program
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            return false;
+            return (Comparison.Different, null);
         }
         finally
         {
             ArrayPool<byte>.Shared.Return(a);
             ArrayPool<byte>.Shared.Return(b);
         }
+    }
+
+    private const int ErrorSharingViolation = 32, ErrorLockViolation = 33;
+
+    private static TimeSpan Max(TimeSpan x, TimeSpan y) => x > y ? x : y;
+
+    // How much longer to wait until the file's last change is CompareSettleTime old. Never longer than that, so a time
+    // in the future (a network drive's clock, say) doesn't stall the check.
+    private static TimeSpan UnsettledFor(FileStamp? stamp)
+    {
+        if (stamp is not { } s) return TimeSpan.Zero;
+        var ageNs = FileHashCache.NowNs() - Math.Max(s.WriteTimeNs, s.ChangeTimeNs);
+        var settleNs = CompareSettleTime.Ticks * 100;
+        return ageNs >= settleNs ? TimeSpan.Zero : TimeSpan.FromTicks(Math.Min(settleNs, settleNs - ageNs) / 100);
     }
 
     private static async Task<int> ReadFullyAsync(SafeFileHandle handle, Memory<byte> buffer, long offset, CancellationToken ct)

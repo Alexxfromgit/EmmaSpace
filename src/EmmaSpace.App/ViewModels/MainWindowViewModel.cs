@@ -31,6 +31,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
     private int _loadGeneration; // bumped by every scan and snapshot load; the newest one wins
     private readonly SemaphoreSlim _snapshotOffers = new(1, 1);
     private readonly SemaphoreSlim _trash = new(1, 1); // one move to the bin at a time, duplicate checks included
+    private readonly HashSet<(FileTree, int)> _trashQueued = []; // moves waiting or under way (UI thread only)
     private Task _snapshotLoad = Task.CompletedTask; // the latest snapshot load, which the next offer waits for
     private bool _snapshotHandedOver; // a snapshot came from outside already, so later ones are asked about
     private bool _syncingSelection;
@@ -584,27 +585,35 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
         SelectedTabIndex = 0;
     }
 
-    public Task MoveToTrashAsync(int node) => MoveOneAtATimeAsync(node, copies: null);
+    public Task MoveToTrashAsync(FileTree tree, int node) => MoveOneAtATimeAsync(tree, node, copies: null);
 
-    public Task MoveDuplicateToTrashAsync(int node, IReadOnlyList<int> copies) => MoveOneAtATimeAsync(node, copies);
+    public Task MoveDuplicateToTrashAsync(FileTree tree, int node, IReadOnlyList<int> copies) =>
+        MoveOneAtATimeAsync(tree, node, copies);
 
-    private async Task MoveOneAtATimeAsync(int node, IReadOnlyList<int>? copies)
+    /// <param name="tree">The results the click was made in: its node numbers mean something only there.</param>
+    private async Task MoveOneAtATimeAsync(FileTree tree, int node, IReadOnlyList<int>? copies)
     {
-        // The results the click was made in: its node numbers mean something only there.
-        var tree = Tree;
-        if (tree is null) return;
-        // One at a time, whatever is moved: two copies of one group moved at once could each be checked against
-        // the other, and any other move could take away the copy (or its folder) that a check is comparing with.
-        await _trash.WaitAsync();
+        // Results replaced before the click (a menu left open over a rescan) or while it waited: drop it. So is a
+        // second click on an item whose move is already waiting or being asked about.
+        if (!ReferenceEquals(tree, Tree) || !_trashQueued.Add((tree, node))) return;
         try
         {
-            // Waited while the results were replaced (a rescan, a snapshot): drop the click.
-            if (!ReferenceEquals(tree, Tree)) return;
-            await MoveToTrashAsync(tree, node, copies);
+            // One at a time, whatever is moved: two copies of one group moved at once could each be checked against
+            // the other, and any other move could take away the copy (or its folder) that a check is comparing with.
+            await _trash.WaitAsync();
+            try
+            {
+                if (!ReferenceEquals(tree, Tree)) return;
+                await MoveToTrashAsync(tree, node, copies);
+            }
+            finally
+            {
+                _trash.Release();
+            }
         }
         finally
         {
-            _trash.Release();
+            _trashQueued.Remove((tree, node));
         }
     }
 
@@ -634,12 +643,12 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
             // The search may be old (or saved in a snapshot) and the files may have changed since: compare
             // them byte by byte now, without any remembered hash. Copies in the bin don't count.
             var ct = Duplicates.BeginCheck($"Checking that \"{name}\" is still identical to another copy…");
-            string? identical = null;
+            IdenticalCopyCheck? found = null;
             var cancelled = false;
             try
             {
                 var progress = new Progress<double>(Duplicates.ReportCheck);
-                identical = await Task.Run(() => DuplicateFinder.FindIdenticalCopyAsync(path, size, others, progress, ct), ct);
+                found = await Task.Run(() => DuplicateFinder.FindIdenticalCopyAsync(path, size, others, progress, ct), ct);
             }
             catch (OperationCanceledException)
             {
@@ -656,8 +665,15 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
                     $"The results changed while the copies were compared, so \"{name}\" was not moved. Try again.\n\n{path}");
                 return;
             }
-            // The copy it matched must still be there: only moves made here wait for the check, not other programs.
-            if (identical is null || !File.Exists(identical))
+            if (found is { Match: null, InUse: true })
+            {
+                await _dialogs.ShowErrorAsync($"Not moved to {bin}",
+                    $"\"{name}\" or one of its copies is open in another program, so they can't be compared now. Close it " +
+                    $"and try again.\n\n{path}");
+                return;
+            }
+            // The copy it matched must still be that file: only moves made here wait for the check, not other programs.
+            if (found?.Match is not { } identical || !DuplicateFinder.IsStillTheMatch(identical, found.MatchStamp))
             {
                 await _dialogs.ShowErrorAsync($"Not moved to {bin}",
                     $"\"{name}\" is no longer identical to any other copy outside the {bin}: a file changed since they were " +
