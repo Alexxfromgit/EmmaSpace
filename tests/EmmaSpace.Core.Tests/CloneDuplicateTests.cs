@@ -28,6 +28,7 @@ public sealed class CloneDuplicateTests
         var group = Assert.Single(groups);
         Assert.Equal(5, group.Nodes.Count);
         Assert.Equal(4, group.Nodes.Count(n => (tree.Nodes[n].Flags & NodeFlags.Clone) != 0));
+        Assert.Equal(2, group.Nodes.Count(n => (tree.Nodes[n].Flags & NodeFlags.CloneShared) != 0));
         // On disk: family a once, family b once and the plain copy. Keeping one, two copies' worth can go.
         Assert.Equal(3, group.HolderCount);
         Assert.Equal(2UL * 300_000, group.WastedBytes);

@@ -66,27 +66,55 @@ public class ReviewRegressionTests
         Assert.True(tree.SizesApproximate); // the clone's blocks may still be held by original.mov
     }
 
-    // Each member: 'p' a plain file, 'c' an APFS clone; then what it holds on disk, for a 1000-byte file.
+    // Each member of a group of 1000-byte files: 'p' a plain file, 'c' an APFS clone that holds its data (the first of
+    // its family, or one changed since), 's' a clone whose data is counted on another; then what it holds on disk.
     [Theory]
     [InlineData("p1000 p1000 p1000", 2000)]                   // keep one, two can go
-    [InlineData("c1000 c0 c0", 0)]                             // one clone family: the blocks are held once
-    [InlineData("c1000 c0 c1000 c0 p1000", 2000)]              // two families and a plain copy: three copies held
-    [InlineData("c1000 c0 c1000 c0", 1000)]                    // two families: deleting one frees its blocks
-    [InlineData("c1000 c300", 0)]                              // the second clone only owns a resource fork
+    [InlineData("c1000 s0 s0", 0)]                             // one clone family: the blocks are held once
+    [InlineData("c1000 s0 c1000 s0 p1000", 2000)]              // two families and a plain copy: three copies held
+    [InlineData("c1000 s0 c1000 s0", 1000)]                    // two families: deleting one frees its blocks
+    [InlineData("c1000 s300", 0)]                              // the second clone only owns a resource fork
+    [InlineData("c1000 s5000", 0)]                             // even when that fork outweighs the data
+    [InlineData("c6000 c1000 s0", 1000)]                       // two families, one holder with a large fork
     [InlineData("c1000 p1000", 1000)]                          // a clone and a real copy
     [InlineData("c1000 c1000", 1000)]                          // a clone changed since holds its own copy
     [InlineData("p400 p400", 1000)]                            // compressed plain copies still count in full
     [InlineData("p1000", 0)]
     public void Duplicate_clones_count_once_per_copy_on_disk(string members, ulong reclaimable)
     {
+        using var tree = CloneGroup(members, out var nodes);
+        Assert.Equal(reclaimable, new DuplicateGroup(1000, nodes, DuplicateGroup.CountHolders(tree, nodes)).WastedBytes);
+    }
+
+    [Fact]
+    public void A_removed_clone_holder_leaves_its_family_holding_the_data()
+    {
+        using var tree = CloneGroup("c1000 s0 p1000", out var nodes);
+        Assert.True(DuplicateGroup.IsCloneHolder(tree.Nodes[nodes[0]].Flags));
+        tree.Remove(nodes[0]);
+        var left = nodes.Skip(1).ToList();
+        // The other clone still holds the blocks, so deleting the plain copy would still free 1000 bytes.
+        Assert.Equal(2, DuplicateGroup.CountHolders(tree, left, removedCloneHolders: 1));
+        Assert.Equal(1, DuplicateGroup.CountHolders(tree, left));
+    }
+
+    private static FileTree CloneGroup(string members, out List<int> nodes)
+    {
         var b = new TreeBuilder();
         b.AddRoot("/Root");
         var i = 0;
         foreach (var m in members.Split(' '))
-            b.AddChild(0, $"f{i++}.bin", m[0] == 'c' ? NodeFlags.Clone : NodeFlags.None, 1000, ulong.Parse(m[1..]));
-        using var tree = b.Build(Info());
-        var nodes = Enumerable.Range(1, i).ToList();
-        Assert.Equal(reclaimable, new DuplicateGroup(1000, nodes, DuplicateGroup.CountHolders(tree, nodes)).WastedBytes);
+        {
+            var flags = m[0] switch
+            {
+                'c' => NodeFlags.Clone,
+                's' => NodeFlags.Clone | NodeFlags.CloneShared,
+                _ => NodeFlags.None,
+            };
+            b.AddChild(0, $"f{i++}.bin", flags, 1000, ulong.Parse(m[1..]));
+        }
+        nodes = Enumerable.Range(1, i).ToList();
+        return b.Build(Info());
     }
 
     [Fact]

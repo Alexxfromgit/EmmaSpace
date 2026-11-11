@@ -80,6 +80,8 @@ typedef enum es_scan_phase {
                                    deleting it may free less than its size on disk. Of several pure
                                    clones, the first one found holds the shared blocks and the others'
                                    `allocated` counts only what they own alone */
+#define ES_NODE_CLONE_SHARED 0x100u /* one of those other pure clones: its data is counted on another
+                                   node of the same clone family, so it keeps no copy of its own */
 
 typedef struct es_scan_options {
     uint32_t struct_size;     /* sizeof(es_scan_options) */

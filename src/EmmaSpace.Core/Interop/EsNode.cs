@@ -20,6 +20,11 @@ public enum NodeFlags : ushort
     /// disk. Of several pure clones only the first one found counts the shared blocks as allocated.
     /// </summary>
     Clone = 0x80,
+    /// <summary>
+    /// A pure clone (<see cref="Clone"/>) whose data is counted on another file of the same clone family, the first one
+    /// found. It keeps no copy of the data of its own.
+    /// </summary>
+    CloneShared = 0x100,
 }
 
 /// <summary>Mirror of <c>es_node</c> in emmascan.h. Must stay exactly 64 bytes.</summary>

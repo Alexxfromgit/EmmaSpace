@@ -299,6 +299,17 @@ TEST_CASE("APFS clones count their shared blocks once") {
         CHECK(holders == 0);
         CHECK(sharers == 3);
     }
+    // The flag names the one that holds the data, whatever the forks weigh.
+    int unshared = 0;
+    for (const char* name : {"original.bin", "clone.bin", "sub/clone2.bin", "sub/forked.bin"}) {
+        const es_node& n = result.nodes[nodes.at(name)];
+        if ((n.flags & ES_NODE_CLONE_SHARED) == 0) {
+            ++unshared;
+            CHECK(n.allocated >= four_mib);
+        }
+    }
+    CHECK(unshared == 1);
+    CHECK((copy.flags & ES_NODE_CLONE_SHARED) == 0);
     // 20 MiB of files; on disk the clones' data once, the fork and the copy.
     CHECK(result.nodes[0].size >= 5 * four_mib);
     CHECK(result.nodes[0].allocated >= 2 * four_mib + fork.size());

@@ -24,22 +24,28 @@ public sealed record DuplicateGroup(ulong FileSize, IReadOnlyList<int> Nodes, in
 
     /// <summary>
     /// How many of these identical files keep their own copy of the data on disk. Pure APFS clones of one file share
-    /// it: the engine counts it on the first one found and gives the others only what they own alone (a resource
-    /// fork, say), so a clone that holds less than half of what the fullest member holds is not counted. Every other
-    /// file is, including clones that were changed since and the first clone of each family.
+    /// it: the engine counts it on the first one found and flags the others <see cref="NodeFlags.CloneShared"/>. Every
+    /// other file holds a copy, including clones that were changed since and the first clone of each family.
     /// </summary>
-    public static int CountHolders(FileTree tree, IEnumerable<int> nodes)
+    /// <param name="removedCloneHolders">
+    /// First clones of a family that were removed from the tree since the scan. Their family's other clones still hold
+    /// the data, so up to that many of the remaining shared clones are counted again. Which family a clone belongs to
+    /// is not known, so this is exact for one family per group and an estimate beyond it.
+    /// </param>
+    public static int CountHolders(FileTree tree, IEnumerable<int> nodes, int removedCloneHolders = 0)
     {
-        ulong fullest = 0;
-        var members = new List<(NodeFlags Flags, ulong Allocated)>();
+        int holders = 0, shared = 0;
         foreach (var node in nodes)
         {
-            ref readonly var n = ref tree.Nodes[node];
-            members.Add((n.Flags, n.Allocated));
-            fullest = Math.Max(fullest, n.Allocated);
+            if ((tree.Nodes[node].Flags & NodeFlags.CloneShared) != 0) shared++;
+            else holders++;
         }
-        return members.Count(m => (m.Flags & NodeFlags.Clone) == 0 || m.Allocated * 2 >= fullest);
+        return holders + Math.Min(Math.Max(removedCloneHolders, 0), shared);
     }
+
+    /// <summary>The first clone of a family, which holds the data its <see cref="NodeFlags.CloneShared"/> clones share.</summary>
+    public static bool IsCloneHolder(NodeFlags flags) =>
+        (flags & (NodeFlags.Clone | NodeFlags.CloneShared)) == NodeFlags.Clone;
 }
 
 public readonly record struct DuplicateProgress(string Stage, long Done, long Total);

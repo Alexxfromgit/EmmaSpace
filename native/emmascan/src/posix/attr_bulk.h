@@ -54,6 +54,9 @@ inline constexpr uint32_t kExtRequested = kExtCloneId | kExtFlags;
 inline constexpr uint32_t kCommonNeeded =
     kCmnName | kCmnDevId | kCmnObjType | kCmnModTime | kCmnAccTime | kCmnAccessMask | kCmnFlags | kCmnFileId;
 inline constexpr uint32_t kFileNeeded = kFileLinkCount | kFileAllocSize | kFileDataLength;
+// A folder whose mount status is unknown could be a mount point (whose record describes the covered folder)
+// or an autofs trigger, so its record alone is not trusted.
+inline constexpr uint32_t kDirNeeded = kDirMountStatus;
 
 // fsobj_type_t (<sys/vnode.h>) and ATTR_DIR_MOUNTSTATUS values.
 inline constexpr uint32_t kTypeDirectory = 2; // VDIR
@@ -113,7 +116,7 @@ struct Record {
     // caller falls back to fstatat().
     bool complete() const {
         if ((common & kCommonNeeded) != kCommonNeeded || mode_type_of(obj_type) == 0) return false;
-        return is_directory() || (file & kFileNeeded) == kFileNeeded;
+        return is_directory() ? (dir & kDirNeeded) == kDirNeeded : (file & kFileNeeded) == kFileNeeded;
     }
 };
 
