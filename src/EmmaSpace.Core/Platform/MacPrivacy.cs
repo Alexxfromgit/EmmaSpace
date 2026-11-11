@@ -32,8 +32,8 @@ public static partial class MacPrivacy
     }
 
     /// <summary>
-    /// True if a scan of <paramref name="root"/> reaches data macOS keeps private: the whole disk, the users' folders,
-    /// <paramref name="home"/> or a folder holding it, or anything in its Library. Paths through the Data volume
+    /// True if a scan of <paramref name="root"/> reaches data macOS keeps private: the whole disk, /Users (even when
+    /// <paramref name="home"/> was moved elsewhere), home or a folder holding it, or anything in its Library. Paths through the Data volume
     /// (/System/Volumes/Data/Users/…) count like the usual ones, since that is where the firmlinked folders live.
     /// </summary>
     public static bool MayCoverProtectedData(string root, string home)
@@ -42,7 +42,7 @@ public static partial class MacPrivacy
         root = WithoutDataVolume(Normalize(root));
         home = WithoutDataVolume(Normalize(home));
         var library = home == "/" ? "/Library" : home + "/Library";
-        return IsSameOrInside(home, root) || IsSameOrInside(root, library) ||
+        return IsSameOrInside(home, root) || IsSameOrInside("/Users", root) || IsSameOrInside(root, library) ||
                IsSameOrInside("/Library/Application Support/com.apple.TCC", root);
     }
 

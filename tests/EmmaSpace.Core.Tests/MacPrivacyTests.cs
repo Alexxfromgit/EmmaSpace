@@ -41,6 +41,18 @@ public sealed class MacPrivacyTests
         Assert.False(MacPrivacy.MayCoverProtectedData(root, Home));
     }
 
+    [Theory]
+    [InlineData("/Users", true)]
+    [InlineData("/System/Volumes/Data/Users", true)]
+    [InlineData("/Volumes/Homes/emma", true)]
+    [InlineData("/Volumes/Homes", true)]
+    [InlineData("/Volumes/Homes/emma/Library/Mail", true)]
+    [InlineData("/Volumes/Backup", false)]
+    public void A_home_moved_off_Users_still_counts_both_places(string root, bool hint)
+    {
+        Assert.Equal(hint, MacPrivacy.MayCoverProtectedData(root, "/Volumes/Homes/emma"));
+    }
+
     [Fact]
     public void Full_Disk_Access_is_known_on_macOS_only()
     {
