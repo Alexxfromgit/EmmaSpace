@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.IO.Compression;
 using System.Runtime.InteropServices;
 using EmmaSpace.Core.Analysis;
 using EmmaSpace.Core.Interop;
@@ -338,14 +339,56 @@ public partial class DuplicateSearchTests
         cache.Save();
         Assert.Equal(1000, FileHashCache.Load(path).Count);
 
-        var bytes = File.ReadAllBytes(path);
-        bytes[^10] ^= 0x01; // inside the compressed entries
-        File.WriteAllBytes(path, bytes);
+        // Each damage below is sure to change the entries or their checksum. Flipping a bit of the
+        // compressed stream is not: Brotli has redundant encodings, so some flips decode to the very
+        // same entries, which the checksum then rightly accepts. Which bits those are depends on the
+        // entry order, which UInt128's per-process hash seed changes, so such a test fails now and then.
+        var saved = File.ReadAllBytes(path);
+        var header = saved[..CacheHeaderSize];
+        var entries = Decompress(saved[CacheHeaderSize..]);
+        Assert.Equal(BitConverter.ToInt32(saved, 16) * BitConverter.ToInt32(saved, 20), entries.Length); // entry size × count: the layout is right
+
+        var changed = (byte[])entries.Clone();
+        changed[entries.Length / 2] ^= 0x01;
+        File.WriteAllBytes(path, [.. header, .. Compress(changed)]); // well-formed stream, wrong entries
         Assert.Equal(0, FileHashCache.Load(path).Count);
+
+        var wrongChecksum = (byte[])saved.Clone();
+        wrongChecksum[CacheHeaderSize - 1] ^= 0x01;
+        File.WriteAllBytes(path, wrongChecksum);
+        Assert.Equal(0, FileHashCache.Load(path).Count);
+
+        File.WriteAllBytes(path, saved[..(CacheHeaderSize + (saved.Length - CacheHeaderSize) / 2)]); // cut off
+        Assert.Equal(0, FileHashCache.Load(path).Count);
+
+        File.WriteAllBytes(path, [.. header, .. "not Brotli"u8]);
+        Assert.Equal(0, FileHashCache.Load(path).Count);
+
+        File.WriteAllBytes(path, saved);
+        Assert.Equal(1000, FileHashCache.Load(path).Count); // only the damage was refused
 
         File.WriteAllBytes(path, "not a cache"u8.ToArray());
         Assert.Equal(0, FileHashCache.Load(path).Count);
         Assert.Equal(0, FileHashCache.Load(Path.Combine(temp.Root, "missing.bin")).Count);
+    }
+
+    /// <summary>Magic (8 bytes), format version, sample size, entry size and count (4 each), checksum (16); then the Brotli stream.</summary>
+    private const int CacheHeaderSize = 8 + 4 * 4 + 16;
+
+    private static byte[] Decompress(byte[] compressed)
+    {
+        using var brotli = new BrotliStream(new MemoryStream(compressed), CompressionMode.Decompress);
+        using var output = new MemoryStream();
+        brotli.CopyTo(output);
+        return output.ToArray();
+    }
+
+    private static byte[] Compress(byte[] data)
+    {
+        using var output = new MemoryStream();
+        using (var brotli = new BrotliStream(output, CompressionLevel.Fastest, leaveOpen: true))
+            brotli.Write(data);
+        return output.ToArray();
     }
 
     [Fact]
