@@ -21,10 +21,12 @@ namespace emmascan::platform {
 inline bool is_dataless(const struct stat& st) { return (st.st_flags & SF_DATALESS) != 0; }
 inline const struct timespec& mtime_of(const struct stat& st) { return st.st_mtimespec; }
 inline const struct timespec& atime_of(const struct stat& st) { return st.st_atimespec; }
+inline const struct timespec& ctime_of(const struct stat& st) { return st.st_ctimespec; }
 #else
 inline bool is_dataless(const struct stat&) { return false; }
 inline const struct timespec& mtime_of(const struct stat& st) { return st.st_mtim; }
 inline const struct timespec& atime_of(const struct stat& st) { return st.st_atim; }
+inline const struct timespec& ctime_of(const struct stat& st) { return st.st_ctim; }
 #endif
 
 inline int64_t to_unix_ms(const struct timespec& t) {

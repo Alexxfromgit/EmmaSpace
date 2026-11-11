@@ -145,4 +145,30 @@ ES_API es_status ES_CALL es_move_to_trash(const es_char* path) {
     }
 }
 
+ES_API es_status ES_CALL es_get_storage_kind(const es_char* path, uint32_t* out_kind, uint64_t* out_device) {
+    if (!out_kind) return ES_ERR_INVALID_ARG;
+    *out_kind = ES_STORAGE_UNKNOWN;
+    if (out_device) *out_device = 0;
+    auto view = to_view(path);
+    if (view.empty()) return ES_ERR_INVALID_ARG;
+    try {
+        uint64_t device = 0;
+        *out_kind = emmascan::platform::storage_kind(view, device);
+        if (out_device) *out_device = device;
+    } catch (...) {
+        *out_kind = ES_STORAGE_UNKNOWN; // only a hint: an unexpected failure means "can't tell"
+    }
+    return ES_OK;
+}
+
+ES_API es_status ES_CALL es_get_file_stamp(intptr_t handle, es_file_stamp* out_stamp) {
+    if (!out_stamp) return ES_ERR_INVALID_ARG;
+    *out_stamp = es_file_stamp{};
+    try {
+        return emmascan::platform::file_stamp(handle, *out_stamp);
+    } catch (...) {
+        return ES_ERR_INTERNAL;
+    }
+}
+
 } // extern "C"
