@@ -30,7 +30,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
     private IScanner? _resultsScanner;
     private int _loadGeneration; // bumped by every scan and snapshot load; the newest one wins
     private readonly SemaphoreSlim _snapshotOffers = new(1, 1);
-    private readonly SemaphoreSlim _duplicateTrash = new(1, 1); // one duplicate copy checked and moved at a time
+    private readonly SemaphoreSlim _trash = new(1, 1); // one move to the bin at a time, duplicate checks included
     private Task _snapshotLoad = Task.CompletedTask; // the latest snapshot load, which the next offer waits for
     private bool _snapshotHandedOver; // a snapshot came from outside already, so later ones are asked about
     private bool _syncingSelection;
@@ -584,36 +584,44 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
         SelectedTabIndex = 0;
     }
 
-    public Task MoveToTrashAsync(int node) => MoveToTrashAsync(node, copies: null);
+    public Task MoveToTrashAsync(int node) => MoveOneAtATimeAsync(node, copies: null);
 
-    public async Task MoveDuplicateToTrashAsync(int node, IReadOnlyList<int> copies)
+    public Task MoveDuplicateToTrashAsync(int node, IReadOnlyList<int> copies) => MoveOneAtATimeAsync(node, copies);
+
+    private async Task MoveOneAtATimeAsync(int node, IReadOnlyList<int>? copies)
     {
-        // One at a time: two copies of one group moved at once could each be checked against the other.
-        await _duplicateTrash.WaitAsync();
+        // The results the click was made in: its node numbers mean something only there.
+        var tree = Tree;
+        if (tree is null) return;
+        // One at a time, whatever is moved: two copies of one group moved at once could each be checked against
+        // the other, and any other move could take away the copy (or its folder) that a check is comparing with.
+        await _trash.WaitAsync();
         try
         {
-            await MoveToTrashAsync(node, copies);
+            // Waited while the results were replaced (a rescan, a snapshot): drop the click.
+            if (!ReferenceEquals(tree, Tree)) return;
+            await MoveToTrashAsync(tree, node, copies);
         }
         finally
         {
-            _duplicateTrash.Release();
+            _trash.Release();
         }
     }
 
-    private async Task MoveToTrashAsync(int node, IReadOnlyList<int>? copies)
+    private async Task MoveToTrashAsync(FileTree tree, int node, IReadOnlyList<int>? copies)
     {
-        var tree = Tree;
-        if (tree is null || node == FileTree.Root || tree.Nodes[node].IsDeleted) return;
+        if (node <= FileTree.Root || node >= tree.Count || tree.Nodes[node].IsDeleted) return;
         var path = tree.GetPath(node);
         ref readonly var n = ref tree.Nodes[node];
         var name = tree.GetName(node);
         var size = n.Size;
         var what = n.IsDirectory ? $"the folder \"{name}\" ({n.FileCount:N0} files, {ByteSize.Format(n.Size)})"
                                  : $"\"{name}\" ({ByteSize.Format(n.Size)})";
-        // The other copies still on screen. With none left (moved or removed meanwhile, e.g. by a click that
-        // waited for this one) this is the last copy: the question says so, and it is moved like any file.
+        // The other copies still on screen and outside the bin. With none left (moved or removed meanwhile, e.g. by
+        // a click that waited for this one) this is the last copy: the question says so, and it is moved like any file.
         var others = copies is null ? []
-            : copies.Where(c => c != node && c > FileTree.Root && c < tree.Count && !tree.Nodes[c].IsDeleted).Select(tree.GetPath).ToList();
+            : copies.Where(c => c != node && c > FileTree.Root && c < tree.Count && !tree.Nodes[c].IsDeleted)
+                .Select(tree.GetPath).Where(p => !TrashFolders.Contains(p)).ToList();
         var bin = FileActions.TrashName;
         var check = copies is null ? ""
             : others.Count > 0 ? "\n\nEmma Space first checks that it is still identical to another copy."
@@ -648,7 +656,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
                     $"The results changed while the copies were compared, so \"{name}\" was not moved. Try again.\n\n{path}");
                 return;
             }
-            if (identical is null)
+            // The copy it matched must still be there: only moves made here wait for the check, not other programs.
+            if (identical is null || !File.Exists(identical))
             {
                 await _dialogs.ShowErrorAsync($"Not moved to {bin}",
                     $"\"{name}\" is no longer identical to any other copy outside the {bin}: a file changed since they were " +

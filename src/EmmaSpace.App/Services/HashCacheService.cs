@@ -37,9 +37,11 @@ public sealed class HashCacheService(SettingsService settings)
     /// <summary>Forgets every remembered hash and deletes the file, whether or not it was loaded.</summary>
     public async Task ClearAsync()
     {
-        Task<FileHashCache>? load;
-        lock (_lock) load = _load;
-        var cache = load is null ? new FileHashCache(s_path) : await load;
+        // Not loaded yet: an empty cache takes the loaded one's place, so a search starting meanwhile uses that one
+        // instead of reading the file this is about to delete.
+        Task<FileHashCache> load;
+        lock (_lock) load = _load ??= Task.FromResult(new FileHashCache(s_path));
+        var cache = await load;
         await Task.Run(cache.Clear);
     }
 }

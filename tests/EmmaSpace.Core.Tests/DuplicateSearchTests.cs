@@ -490,9 +490,14 @@ public partial class DuplicateSearchTests
 
     // The check before a copy is moved to the Trash
 
+    /// <summary>Outside Windows a comparison is trusted only with the file stamps of the native engine.</summary>
+    private static void RequireComparableFiles() =>
+        Assert.SkipUnless(OperatingSystem.IsWindows() || NativeEngine.IsAvailable, "File stamps need the native engine.");
+
     [Fact]
     public async Task Copies_are_compared_byte_by_byte()
     {
+        RequireComparableFiles();
         using var temp = Files(out var content);
         var ct = TestContext.Current.CancellationToken;
         var one = Path.Combine(temp.Root, "a", "one.bin");
@@ -508,6 +513,7 @@ public partial class DuplicateSearchTests
     [Fact]
     public async Task The_identical_copy_is_found_and_copies_in_the_bin_do_not_count()
     {
+        RequireComparableFiles();
         using var temp = Files(out var content);
         var ct = TestContext.Current.CancellationToken;
         var one = Path.Combine(temp.Root, "a", "one.bin");
@@ -519,6 +525,38 @@ public partial class DuplicateSearchTests
         var progress = new Collect<double>();
         Assert.Equal(two, await DuplicateFinder.FindIdenticalCopyAsync(one, Big, [inBin, variant, two], progress, ct));
         Assert.All(progress.Reports, p => Assert.InRange(p, 0, 1));
+    }
+
+    [Fact]
+    public async Task A_copy_written_to_while_it_is_compared_is_not_identical()
+    {
+        RequireComparableFiles();
+        using var temp = Files(out _);
+        var ct = TestContext.Current.CancellationToken;
+        var one = Path.Combine(temp.Root, "a", "one.bin");
+        var two = Path.Combine(temp.Root, "b", "two.bin");
+        // Linux moves file times on in steps of a clock tick: let one pass since the files were written.
+        await Task.Delay(50, ct);
+
+        var written = false;
+        var identical = await DuplicateFinder.AreIdenticalAsync(one, two, Big, ct, _ =>
+        {
+            if (written) return;
+            try
+            {
+                // Same size, and in the part already compared, so only the stamp can tell.
+                using var writer = new FileStream(two, FileMode.Open, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
+                writer.WriteByte(0x5A);
+                written = true;
+            }
+            catch (IOException) when (OperatingSystem.IsWindows())
+            {
+                // Windows kept the writer out while the files were compared: they really are identical.
+            }
+        });
+
+        Assert.Equal(!written, identical);
+        if (!OperatingSystem.IsWindows()) Assert.True(written);
     }
 
     [Fact]
@@ -544,5 +582,14 @@ public partial class DuplicateSearchTests
     [InlineData("/home/emma/Trash/file", false)]
     [InlineData("/home/emma/.Trashy/file", false)]
     public void Recycle_bins_and_trash_folders_are_recognized(string path, bool inTrash) =>
-        Assert.Equal(inTrash, TrashFolders.Contains(path));
+        Assert.Equal(inTrash, TrashFolders.Contains(path, dataHome: null));
+
+    [Theory]
+    [InlineData("/home/emma/data/Trash/files/a.bin", "/home/emma/data", true)]
+    [InlineData("/home/emma/data/Trash/files/a.bin", "/home/emma/data/", true)]
+    [InlineData("/home/emma/data/Trashy/a.bin", "/home/emma/data", false)]
+    [InlineData("/home/emma/data/Trash/files/a.bin", "data", false)] // relative: ignored, as the specification says
+    [InlineData("/home/emma/.local/share/Trash/files/a.bin", "/home/emma/data", true)]
+    public void The_home_trash_follows_XDG_DATA_HOME(string path, string dataHome, bool inTrash) =>
+        Assert.Equal(inTrash, TrashFolders.Contains(path, dataHome));
 }

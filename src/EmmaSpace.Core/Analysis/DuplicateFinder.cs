@@ -204,6 +204,16 @@ public static class DuplicateFinder
         }
     }
 
+    // No writers while it is open: Windows enforces the share mode, so a file open for writing elsewhere can't be
+    // opened (an IOException, so it is not identical) and can't be opened for writing meanwhile. Other systems
+    // don't enforce it, which is what the stamps in Unchanged are for.
+    private static SafeFileHandle OpenForComparison(string path) =>
+        File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete,
+            FileOptions.SequentialScan | FileOptions.Asynchronous);
+
+    private static bool Unchanged(FileStamp? before, FileStamp? after) =>
+        OperatingSystem.IsWindows() ? before == after : before is { Trusted: true } && before == after;
+
     private static SafeFileHandle OpenRead(string path, bool sequential) =>
         File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete,
             sequential ? FileOptions.SequentialScan | FileOptions.Asynchronous : FileOptions.Asynchronous);
@@ -303,7 +313,10 @@ public static class DuplicateFinder
 
     /// <summary>
     /// Whether two files have exactly the same content, compared byte by byte now (no hashes, no cache).
-    /// False if either can't be read or is not <paramref name="expectedSize"/> bytes long.
+    /// False if either can't be read or is not <paramref name="expectedSize"/> bytes long, and false when it can't be
+    /// told that neither changed during the comparison: a write to a part already compared would go unseen.
+    /// Windows keeps writers out while the files are open; elsewhere each file's stamp must be trusted (the
+    /// change time, which every write moves on) and the same before and after.
     /// <paramref name="onCompared"/> gets the bytes of each file compared after every step.
     /// </summary>
     public static async Task<bool> AreIdenticalAsync(string first, string second, ulong expectedSize, CancellationToken ct = default,
@@ -313,10 +326,12 @@ public static class DuplicateFinder
         var b = ArrayPool<byte>.Shared.Rent(FullBufferSize);
         try
         {
-            using var left = OpenRead(first, sequential: true);
-            using var right = OpenRead(second, sequential: true);
+            using var left = OpenForComparison(first);
+            using var right = OpenForComparison(second);
             if ((ulong)RandomAccess.GetLength(left) != expectedSize || (ulong)RandomAccess.GetLength(right) != expectedSize)
                 return false;
+            var leftBefore = StorageInfo.GetStamp(left);
+            var rightBefore = StorageInfo.GetStamp(right);
             long offset = 0;
             while (true)
             {
@@ -328,7 +343,8 @@ public static class DuplicateFinder
                 onCompared?.Invoke(readLeft);
             }
             return (ulong)offset == expectedSize &&
-                   (ulong)RandomAccess.GetLength(left) == expectedSize && (ulong)RandomAccess.GetLength(right) == expectedSize;
+                   (ulong)RandomAccess.GetLength(left) == expectedSize && (ulong)RandomAccess.GetLength(right) == expectedSize &&
+                   Unchanged(leftBefore, StorageInfo.GetStamp(left)) && Unchanged(rightBefore, StorageInfo.GetStamp(right));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
