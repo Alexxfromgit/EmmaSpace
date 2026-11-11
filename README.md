@@ -48,7 +48,7 @@ right-click → Open the first time.
 | Area | What you get |
 |---|---|
 | Scan | Drives or any folder; progress with live counts; cancel any time; links/junctions are not followed |
-| Fast scan | As administrator, whole NTFS drives are read straight from the master file table (a system drive with 5.8 M entries in ~8 s instead of about a minute; see [Performance](#performance)). On Linux, whole ext2/3/4 file systems are read straight from their inode tables through a small helper that runs as root (pkexec asks for your password; the app itself keeps running as you) |
+| Fast scan | As administrator, whole NTFS drives are read straight from the master file table (a system drive with 5.8 M entries in ~8 s instead of about a minute; see [Performance](#performance)). On Linux, whole ext2/3/4 file systems are read straight from their inode tables through a small helper that runs as root (pkexec asks for your password; the app itself keeps running as you). macOS has no such shortcut (APFS volumes are encrypted at the block level), so there every scan lists folders in batches with `getattrlistbulk` and the button is not shown |
 | Cloud files | OneDrive and other cloud placeholders count only what is stored on this PC (marked ☁); unpopulated cloud folders are not listed, so scanning never triggers downloads |
 | Folder tree | Size, share of parent, size on disk, file count; huge folders page in 500 items at a time |
 | Treemap | Squarified layout with cushion shading, colour by file type, labels, click to select, double-click to zoom, breadcrumb to go back |
@@ -68,7 +68,7 @@ EmmaSpace.App   Avalonia views, view models, TreemapControl
 EmmaSpace.Core  FileTree (flat arrays) · analyzers · snapshots · export · scanners
       │  LibraryImport, zero-copy spans over native memory
 emmascan.dll    C++20: MFT reader (raw volume) · parallel walker (GetFileInformationByHandleEx) · Recycle Bin (IFileOperation)
-libemmascan     macOS/Linux: parallel walker (openat/fstatat, firmlink and hard-link de-duplication, online-only iCloud items never downloaded) · Trash (NSFileManager)
+libemmascan     macOS/Linux: parallel walker (macOS: getattrlistbulk, Linux: openat/fstatat; firmlink and hard-link de-duplication, online-only iCloud items never downloaded, autofs triggers never entered) · Trash (NSFileManager)
                 Linux: ext4 reader (inode tables and directory blocks from the block device)
 emmascan-helper Linux: runs one scan as root for the app (started through pkexec), result over a pipe
 ```
@@ -123,6 +123,20 @@ On Linux (Ubuntu 24.04 under WSL 2 on the same PC, ext4 root file system, run as
 
 On `/usr` the ext4 reader matches `du -sb --apparent-size -x` and `find -xdev` exactly.
 
+On macOS (Apple M2, 16 GB, macOS 15.6, APFS with FileVault, warm cache, default 8 threads):
+
+| Listing | Data volume (7.7 M entries) | `/Applications` (1.1 M) | Home folder (3.3 M) |
+|---|---|---|---|
+| `getattrlistbulk` (used) | ~42 s | ~3.5 s | ~25 s |
+| `readdir` + `fstatat` (before) | ~50 s | ~5.0 s | ~27 s |
+| `searchfs` catalog search (not used) | ~89 s for 5.8 M | | |
+
+APFS itself sets the pace: even listing names alone costs about as much as listing every attribute,
+and more threads mostly add contention in the kernel. Both walkers give the same tree for `/usr`,
+`/Applications` and `/`, except that `getattrlistbulk` also lists the few dozen entries that
+`stat` refuses (sandboxed caches). `searchfs` reads a whole volume in one stream that cannot be split
+across threads, so it ends up twice as slow as the walker and is not used.
+
 ## Build and run
 
 Prerequisites (Windows): .NET SDK 10.0.4xx, Visual Studio 2026 with **Desktop development with C++**,
@@ -136,6 +150,9 @@ dotnet run --project src/EmmaSpace.App
 ```
 
 macOS / Linux: `./build.sh --test` (CMake ≥ 3.25, Ninja, a C++20 compiler and the .NET SDK).
+`emmascan-bench <folder> [--threads N] [--repeat N] [--dump FILE]` (built with the tests, in
+`artifacts/native-build/<preset>/native/emmascan/<config>/`) times scans through the C API; on macOS
+`EMMASCAN_NO_BULK=1` switches the walker back to `readdir` + `fstatat` for comparison.
 On Ubuntu 24.04: `sudo apt-get install -y build-essential cmake ninja-build libicu74 e2fsprogs`
 (mke2fs makes the ext4 images the engine tests read).
 
@@ -188,7 +205,7 @@ exactly (CI runs it with sudo):
 ## Layout
 
 ```
-native/emmascan/      C ABI header, node store, MFT and ext4 readers, Windows and POSIX walkers, trash, Linux root helper (tools/), tests
+native/emmascan/      C ABI header, node store, MFT and ext4 readers, Windows and POSIX walkers, trash, Linux root helper and emmascan-bench (tools/), tests
 src/EmmaSpace.Core/   Interop, Model, Scanning, Analysis, Snapshots, Export, Platform
 src/EmmaSpace.App/    App, Views, ViewModels, Controls (treemap, donut, share bar), Services
 tests/                xUnit v3 tests (Microsoft.Testing.Platform)
@@ -198,11 +215,9 @@ branding/             icon source art (make-icon.ps1 and make-icns.py build the 
 
 ## Roadmap
 
-1. **Test macOS on real hardware**: the shared POSIX engine is tested on Linux (all tests pass, and
-   a scan of `/usr` matches `du`/`find` exactly in bytes, files, folders and hard links), but the
-   macOS-only parts (Trash, firmlink and `/System/Volumes` handling) are so far only compiled by CI,
-   not run on a Mac. After that: `getattrlistbulk` for faster enumeration, Full Disk Access
-   guidance, and a signed, notarized `.app` via `vpk pack` on macOS.
+1. **macOS**: Full Disk Access guidance, clone-aware sizes on APFS, and a signed, notarized `.app`
+   via `vpk pack` on macOS. The engine now runs and is tested on a Mac (Apple silicon), including
+   Trash and the firmlink handling; Intel Macs are so far only built by CI.
 2. **Code signing**: sign the Windows installer and sign and notarize the macOS app; the release
    workflow is ready for both.
 3. MFT: handle a `$MFT` whose runlist spans extension records (currently falls back to the walker),

@@ -5,8 +5,14 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <random>
 #include <string>
+
+#if !defined(_WIN32)
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 
 namespace fs = std::filesystem;
 
@@ -127,6 +133,103 @@ TEST_CASE("POSIX scan counts hard links once and does not follow symlinks") {
     CHECK(result.nodes[0].size < 5600 + 1024);
     CHECK(result.nodes[0].size >= 5600);
     CHECK(result.nodes[0].dir_count == 4);
+    es_scan_free(scan);
+}
+#endif
+
+#if !defined(_WIN32)
+namespace {
+
+// Relative path ("a/b/c") of every node below the root.
+std::map<std::string, uint32_t> paths_of(const es_result& r) {
+    std::map<std::string, uint32_t> out;
+    std::vector<std::string> path_of(r.node_count);
+    for (uint32_t i = 1; i < r.node_count; ++i) { // parents always come before their children
+        const auto name = name_of(r, i);
+        std::string utf8 = fs::path(std::u16string(name)).string();
+        const uint32_t parent = r.nodes[i].parent;
+        path_of[i] = parent == 0 ? utf8 : path_of[parent] + "/" + utf8;
+        out[path_of[i]] = i;
+    }
+    return out;
+}
+
+} // namespace
+
+// Checks the walker against lstat() done here, so it is not compared with its own code. On macOS this
+// covers getattrlistbulk; elsewhere readdir + fstatat.
+TEST_CASE("POSIX scan matches lstat for every entry") {
+    TempTree tree;
+    const fs::path& root = tree.root;
+    // Enough entries with long names to need several getattrlistbulk batches.
+    fs::create_directories(root / "many");
+    for (int i = 0; i < 6000; ++i)
+        TempTree::write(root / "many" / ("file-with-a-fairly-long-name-to-fill-the-batch-buffer-" + std::to_string(i)),
+                        static_cast<size_t>(i % 97));
+    TempTree::write(root / std::string(255, 'n'), 10); // longest name APFS and ext4 allow
+    TempTree::write(root / "e\xcc\x81-decomposed.txt", 11); // "é" as e + combining acute (NFD)
+    TempTree::write(root / "\xf0\x9f\x98\x80.txt", 12);   // emoji outside the BMP
+    fs::path deep = root;
+    for (int i = 0; i < 40; ++i) deep /= "d" + std::to_string(i);
+    fs::create_directories(deep);
+    TempTree::write(deep / "bottom.txt", 13);
+    {
+        std::ofstream sparse(root / "sparse.bin", std::ios::binary);
+        sparse.seekp(64 * 1024 * 1024 - 1);
+        sparse.put('x'); // 64 MiB long, almost nothing allocated (on file systems with holes)
+    }
+    fs::create_hard_link(root / "top.bin", root / "docs" / "top-link.bin");
+    fs::create_symlink("top.bin", root / "file-link");
+    fs::create_directory_symlink("docs", root / "dir-link");
+
+    const auto path = tree.path16();
+    es_scan_options options{};
+    options.struct_size = sizeof(options);
+    options.mode = ES_MODE_WALKER;
+    options.root_path = reinterpret_cast<const es_char*>(path.c_str());
+    es_scan* scan = nullptr;
+    REQUIRE(es_scan_start(&options, &scan) == ES_OK);
+    REQUIRE(es_scan_wait(scan, 60000) == ES_OK);
+    es_result result{};
+    REQUIRE(es_scan_get_result(scan, &result) == ES_OK);
+    CHECK(result.errors == 0);
+    const auto nodes = paths_of(result);
+
+    size_t expected = 0;
+    int hard_link_names_counted = 0;
+    for (auto it = fs::recursive_directory_iterator(root); it != fs::recursive_directory_iterator(); ++it) {
+        ++expected;
+        const std::string rel = it->path().lexically_relative(root).string();
+        INFO(rel);
+        struct stat st{};
+        REQUIRE(lstat(it->path().c_str(), &st) == 0);
+        const auto found = nodes.find(rel);
+        REQUIRE(found != nodes.end());
+        const es_node& n = result.nodes[found->second];
+        CHECK(((n.flags & ES_NODE_DIRECTORY) != 0) == S_ISDIR(st.st_mode));
+        CHECK(n.attributes == static_cast<uint32_t>(st.st_mode));
+#if defined(__APPLE__)
+        const auto& mt = st.st_mtimespec;
+#else
+        const auto& mt = st.st_mtim;
+#endif
+        CHECK(n.mtime == static_cast<int64_t>(mt.tv_sec) * 1000 + mt.tv_nsec / 1000000);
+        if (S_ISLNK(st.st_mode)) {
+            CHECK((n.flags & ES_NODE_REPARSE) != 0);
+            CHECK(n.first_child == ES_NONE); // never followed
+        }
+        if (!S_ISDIR(st.st_mode)) {
+            if (st.st_nlink > 1) {
+                if (n.size != 0) ++hard_link_names_counted;
+            } else {
+                CHECK(n.size == static_cast<uint64_t>(st.st_size));
+                CHECK(n.allocated == static_cast<uint64_t>(st.st_blocks) * 512);
+            }
+        }
+    }
+    CHECK(hard_link_names_counted == 1); // top.bin and top-link.bin share one count
+    CHECK(nodes.size() == expected);     // nothing extra either
+    CHECK(result.nodes[0].file_count == expected - result.nodes[0].dir_count);
     es_scan_free(scan);
 }
 #endif
