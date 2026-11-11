@@ -73,3 +73,20 @@ internal unsafe struct EsResult
     public uint Reserved;
     public ulong ElapsedMs;
 }
+
+/// <summary>Mirror of <c>es_file_stamp</c> in emmascan.h.</summary>
+[StructLayout(LayoutKind.Sequential)]
+public struct EsFileStamp
+{
+    public ulong Volume;
+    public ulong FileIdLow;
+    public ulong FileIdHigh;
+    public ulong Size;
+    public long MTimeNs;
+    public long CTimeNs;
+    public ulong Usn;
+    public uint Flags;
+    public uint Reserved;
+
+    public const uint Trusted = 0x1; // ES_STAMP_TRUSTED
+}

@@ -116,6 +116,7 @@ public partial class App : Application
         services.AddSingleton<ElevationService>();
         services.AddSingleton<UpdateService>();
         services.AddSingleton<UpdateViewModel>();
+        services.AddSingleton<HashCacheService>();
         services.AddTransient<SettingsViewModel>();
         services.AddSingleton<IDialogService>(sp => new DialogService(window, sp.GetRequiredService<SettingsViewModel>));
         services.AddSingleton<MainWindowViewModel>();

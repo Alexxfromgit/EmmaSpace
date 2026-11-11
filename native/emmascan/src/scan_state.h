@@ -57,4 +57,11 @@ bool is_elevated();
 
 es_status move_to_trash(std::u16string_view path);
 
+// es_storage_kind of the volume holding path; ES_STORAGE_UNKNOWN when it cannot be told. device is set
+// to a value identifying that file system (0 when unknown).
+uint32_t storage_kind(std::u16string_view path, uint64_t& device);
+
+// Fills stamp from an open file handle (HANDLE on Windows, file descriptor elsewhere).
+es_status file_stamp(intptr_t handle, es_file_stamp& stamp);
+
 } // namespace emmascan::platform

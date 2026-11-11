@@ -11,6 +11,9 @@ public sealed class AppSettings
     public bool OldFilesByAccess { get; set; }
     public bool CheckForUpdates { get; set; } = true;
 
+    /// <summary>Remember file hashes between duplicate searches, so unchanged files are not read again.</summary>
+    public bool UseHashCache { get; set; } = true;
+
     /// <summary>"System", "Light" or "Dark"; read with <see cref="EmmaSpace.Core.Platform.AppThemes.Parse"/>.</summary>
     public string? Theme { get; set; }
 

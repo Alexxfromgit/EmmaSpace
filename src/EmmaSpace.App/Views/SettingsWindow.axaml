@@ -60,6 +60,16 @@
           <TextBlock Text="{Binding Updates.StatusText}" Classes="caption" TextWrapping="Wrap" IsVisible="{Binding Updates.HasStatus}" />
           <TextBlock Text="{Binding Updates.ReadyText}" Classes="caption" TextWrapping="Wrap" IsVisible="{Binding Updates.IsUpdateReady}" />
         </StackPanel>
+
+        <StackPanel Spacing="8">
+          <TextBlock Text="Duplicates" Classes="h2" />
+          <CheckBox Content="Remember file fingerprints to speed up repeated searches" IsChecked="{Binding RememberFileHashes}" />
+          <TextBlock Text="{x:Static vm:SettingsViewModel.RememberHashesHint}" Classes="caption" TextWrapping="Wrap" />
+          <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,4,0,0">
+            <Button Content="Forget fingerprints" Command="{Binding ClearHashCacheCommand}" CornerRadius="8" Padding="14,6" />
+            <TextBlock Text="{Binding HashCacheStatus}" Classes="caption" VerticalAlignment="Center" TextWrapping="Wrap" />
+          </StackPanel>
+        </StackPanel>
       </StackPanel>
     </DockPanel>
   </Grid>

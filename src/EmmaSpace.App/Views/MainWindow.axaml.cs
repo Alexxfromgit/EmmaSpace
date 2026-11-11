@@ -64,8 +64,8 @@ public partial class MainWindow : Window
                 ToggleSelectedRow(null);
                 e.Handled = true;
                 break;
-            case Key.Delete when ViewModel?.FolderTree.SelectedRow is { } row and not MoreRowViewModel:
-                _ = ViewModel.MoveToTrashAsync(row.Node);
+            case Key.Delete when ViewModel is { Tree: { } tree } && ViewModel.FolderTree.SelectedRow is { } row and not MoreRowViewModel:
+                _ = ViewModel.MoveToTrashAsync(tree, row.Node);
                 e.Handled = true;
                 break;
         }
