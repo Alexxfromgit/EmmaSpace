@@ -16,6 +16,16 @@ You need the .NET 10 SDK (`global.json` pins the version), CMake ≥ 3.25 and a 
 dotnet run --project src/EmmaSpace.App
 ```
 
+To time the engine, `emmascan-bench <folder> --repeat 3` prints each run's time and totals, and
+`--dump FILE` writes every path with its sizes so two runs can be compared with `diff`. It is built
+with the tests (`artifacts/native-build/<preset>/native/emmascan/<config>/emmascan-bench`).
+
+For engine changes, also run the native tests under the sanitizers (CI does not), e.g. on macOS or Linux:
+`cmake -S . -B artifacts/native-build/asan -G Ninja -DCMAKE_BUILD_TYPE=Debug "-DCMAKE_CXX_FLAGS=-fsanitize=address,undefined"
+"-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined" "-DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=address,undefined"`,
+then `cmake --build artifacts/native-build/asan && ctest --test-dir artifacts/native-build/asan` (on macOS add
+`-DCMAKE_OSX_ARCHITECTURES=arm64` and the same flags as `CMAKE_OBJCXX_FLAGS`).
+
 See the [README](README.md) for the architecture and layout.
 
 ## Pull requests

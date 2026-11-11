@@ -24,7 +24,7 @@ else()
     list(APPEND EMMASCAN_SOURCES src/posix/posix_platform.cpp)
     if(APPLE)
         enable_language(OBJCXX)
-        list(APPEND EMMASCAN_SOURCES src/posix/storage_mac.cpp src/posix/trash_mac.mm)
+        list(APPEND EMMASCAN_SOURCES src/posix/attr_bulk.h src/posix/storage_mac.cpp src/posix/trash_mac.mm)
     else()
         list(APPEND EMMASCAN_SOURCES src/posix/ext4_reader.h src/posix/ext4_reader_linux.cpp)
     endif()
@@ -92,4 +92,16 @@ endif()
 
 if(EMMASCAN_BUILD_TESTS)
     add_subdirectory(tests)
+
+    # Development tool: times scans through the public API (see tools/emmascan_bench.cpp). Never packaged.
+    add_executable(emmascan-bench tools/emmascan_bench.cpp)
+    target_link_libraries(emmascan-bench PRIVATE emmascan)
+    target_include_directories(emmascan-bench PRIVATE src)
+    emmascan_warnings(emmascan-bench)
+    if(WIN32)
+        add_custom_command(TARGET emmascan-bench POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_RUNTIME_DLLS:emmascan-bench> $<TARGET_FILE_DIR:emmascan-bench>
+            COMMAND_EXPAND_LISTS
+        )
+    endif()
 endif()
