@@ -3,7 +3,8 @@
 //     emmascan-bench <folder> [--mode auto|walker|mft|ext4] [--threads N] [--repeat N] [--dump FILE]
 //
 // Prints one line per run (time, mode used, counts, totals, errors). --dump writes every node of the last run
-// as "path<TAB>size<TAB>allocated<TAB>flags", sorted by path, so two scan methods can be compared with diff.
+// as "path<TAB>size<TAB>allocated<TAB>flags" (see escaped() for odd names), sorted by path, so two scan
+// methods can be compared with diff.
 // On macOS, EMMASCAN_NO_BULK=1 makes the engine list folders with readdir + fstatat instead of getattrlistbulk.
 
 #include "emmascan/emmascan.h"
@@ -58,6 +59,16 @@ int usage() {
     return 2;
 }
 
+// The root may end in a separator ("/", "C:\\"). A backslash is one only on Windows; elsewhere it can be
+// part of a name.
+bool is_separator(char c) {
+#ifdef _WIN32
+    return c == '/' || c == '\\';
+#else
+    return c == '/';
+#endif
+}
+
 std::string full_path(const es_result& r, uint32_t node) {
     std::vector<uint32_t> chain;
     for (uint32_t n = node; n != ES_NONE; n = r.nodes[n].parent) chain.push_back(n);
@@ -65,10 +76,30 @@ std::string full_path(const es_result& r, uint32_t node) {
     for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
         const es_node& n = r.nodes[*it];
         const std::u16string_view name(reinterpret_cast<const char16_t*>(r.names) + n.name_offset, n.name_length);
-        if (!path.empty() && path.back() != '/' && path.back() != '\\') path.push_back('/');
+        if (!path.empty() && !is_separator(path.back())) path.push_back('/');
         path += emmascan::utf16_to_utf8(name);
     }
     return path;
+}
+
+// One dump line per node: a tab or line break in a name is written as \t, \n or \r, so names can't split a
+// row or pass for a size field. Outside Windows a backslash can be part of a name too, so it becomes \\.
+std::string escaped(const std::string& path) {
+    std::string out;
+    out.reserve(path.size());
+    for (char c : path) {
+        switch (c) {
+        case '\t': out += "\\t"; break;
+        case '\n': out += "\\n"; break;
+        case '\r': out += "\\r"; break;
+        case '\\':
+            if (is_separator(c)) out.push_back(c); // Windows
+            else out += "\\\\";
+            break;
+        default: out.push_back(c);
+        }
+    }
+    return out;
 }
 
 bool dump(const es_result& r, const std::filesystem::path& file) {
@@ -79,7 +110,7 @@ bool dump(const es_result& r, const std::filesystem::path& file) {
         char tail[96];
         std::snprintf(tail, sizeof tail, "\t%llu\t%llu\t0x%02x", static_cast<unsigned long long>(n.size),
                       static_cast<unsigned long long>(n.allocated), static_cast<unsigned>(n.flags));
-        lines.push_back(full_path(r, i) + tail);
+        lines.push_back(escaped(full_path(r, i)) + tail);
     }
     std::sort(lines.begin(), lines.end());
     std::ofstream out(file, std::ios::binary);

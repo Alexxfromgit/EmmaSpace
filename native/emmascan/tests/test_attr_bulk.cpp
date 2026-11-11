@@ -121,6 +121,20 @@ TEST_CASE("bulk: a directory record carries its mount status and needs no file a
     CHECK(r.name == "Network");
 }
 
+TEST_CASE("bulk: a directory without its mount status is not trusted") {
+    RecordBuilder b;
+    b.obj_type = kTypeDirectory;
+    b.mode = 040755;
+    b.dir = 0; // the status was not returned, so it could still be a mount point
+    b.file = 0;
+    const auto buf = b.build();
+    Record r;
+    uint32_t length = 0;
+    REQUIRE(decode(buf, r, length) == Decode::ok);
+    CHECK(r.is_directory());
+    CHECK_FALSE(r.complete()); // the walker asks fstatat() instead, as the readdir walker always did
+}
+
 TEST_CASE("bulk: records follow each other by their length") {
     RecordBuilder a, b;
     b.name = "second";
