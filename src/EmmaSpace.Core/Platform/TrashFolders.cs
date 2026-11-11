@@ -25,9 +25,14 @@ public static class TrashFolders
         foreach (var part in path.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries))
         {
             if (part.Equals("$Recycle.Bin", StringComparison.OrdinalIgnoreCase) || part.Equals("RECYCLER", StringComparison.OrdinalIgnoreCase) ||
-                part is ".Trash" or ".Trashes" || part.StartsWith(".Trash-", StringComparison.Ordinal))
+                part is ".Trash" or ".Trashes" || IsUserTrash(part))
                 return true;
         }
         return path.Replace('\\', '/').Contains("/.local/share/Trash/", StringComparison.Ordinal);
     }
+
+    // .Trash-$uid: the freedesktop.org name is followed by a user's number, nothing else (.Trash-backup is a folder).
+    private static bool IsUserTrash(string part) =>
+        part.Length > ".Trash-".Length && part.StartsWith(".Trash-", StringComparison.Ordinal) &&
+        part.AsSpan(".Trash-".Length).IndexOfAnyExceptInRange('0', '9') < 0;
 }

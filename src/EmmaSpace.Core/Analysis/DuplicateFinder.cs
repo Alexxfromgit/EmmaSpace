@@ -31,10 +31,12 @@ public sealed record DuplicateResult(ulong MinSize, IReadOnlyList<DuplicateGroup
 public readonly record struct DuplicateProgress(string Stage, long Done, long Total, long BytesDone = 0, long BytesTotal = 0);
 
 /// <summary>
-/// What <see cref="DuplicateFinder.FindIdenticalCopyAsync"/> found: the identical copy and its stamp at the end of the
-/// comparison, or none, and whether a copy could not be compared because another program has it open for writing.
+/// What <see cref="DuplicateFinder.FindIdenticalCopyAsync"/> found: the identical copy, or none, with the stamps the
+/// copy and the file being checked had at the end of the comparison, and whether a copy could not be compared because
+/// another program has it open for writing. Both files must still have those stamps when the file is moved (see
+/// <see cref="DuplicateFinder.IsStillTheMatch"/>).
 /// </summary>
-public sealed record IdenticalCopyCheck(string? Match, FileStamp? MatchStamp, bool InUse);
+public sealed record IdenticalCopyCheck(string? Match, FileStamp? MatchStamp, FileStamp? TargetStamp, bool InUse);
 
 /// <summary>
 /// Finds identical files in three passes so most files are never read in full:
@@ -186,10 +188,12 @@ public static class DuplicateFinder
             }
 
             // Each file system is read with its own plan, all at the same time.
-            await Task.WhenAll(files.GroupBy(n => locate(n).Device).Select(device =>
+            // Grouped by kind as well as device: a device of 0 only means it couldn't be told, so it says nothing
+            // about which files share a file system, and files of different kinds never share a plan.
+            await Task.WhenAll(files.GroupBy(locate).Select(location =>
             {
-                var plan = ReadPlan.For(locate(device.First()).Kind);
-                var queue = InReadOrder(device, plan, pathOf);
+                var plan = ReadPlan.For(location.Key.Kind);
+                var queue = InReadOrder(location, plan, pathOf);
                 var useCache = plan.UseCache ? cache : null;
                 return Parallel.ForEachAsync(queue,
                     new ParallelOptions { MaxDegreeOfParallelism = full ? plan.FullParallelism : plan.SampleParallelism, CancellationToken = ct },
@@ -217,8 +221,16 @@ public static class DuplicateFinder
         File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete,
             FileOptions.SequentialScan | FileOptions.Asynchronous);
 
+    // A missing stamp (no native engine, or a file system that can't tell) never counts as unchanged: without it a
+    // different file put in the same place afterwards couldn't be told apart either.
     private static bool Unchanged(FileStamp? before, FileStamp? after) =>
-        OperatingSystem.IsWindows() ? before == after : before is { Trusted: true } && before == after;
+        before is { } b && (OperatingSystem.IsWindows() || b.Trusted) && b == after;
+
+    /// <summary>
+    /// Whether <see cref="FindIdenticalCopyAsync"/> can confirm a copy at all: that needs the file stamps of the
+    /// native engine. Without them no copy is ever found identical.
+    /// </summary>
+    public static bool CanCheckCopies => NativeEngine.IsAvailable;
 
     private static SafeFileHandle OpenRead(string path, bool sequential) =>
         File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete,
@@ -304,7 +316,7 @@ public static class DuplicateFinder
         foreach (var copy in candidates)
         {
             var start = done;
-            var (result, stamp) = await CompareAsync(path, copy, size, ct, bytes =>
+            var (result, ownStamp, copyStamp) = await CompareAsync(path, copy, size, ct, bytes =>
             {
                 done += bytes;
                 var now = Environment.TickCount64;
@@ -312,21 +324,22 @@ public static class DuplicateFinder
                 lastReport = now;
                 progress?.Report(Math.Min(1, done / total));
             });
-            if (result == Comparison.Identical) return new IdenticalCopyCheck(copy, stamp, InUse: false);
+            if (result == Comparison.Identical) return new IdenticalCopyCheck(copy, copyStamp, ownStamp, InUse: false);
             inUse |= result == Comparison.InUse;
             done = start + size;
         }
-        return new IdenticalCopyCheck(null, null, inUse);
+        return new IdenticalCopyCheck(null, null, null, inUse);
     }
 
     /// <summary>
-    /// Whether the file at <paramref name="path"/> is still the one a check matched: the same file, unchanged, when the
-    /// check had its stamp, or at least a file of that name when it hadn't. Another program could have moved a
-    /// different file there since.
+    /// Whether the file at <paramref name="path"/> is still the one a check compared, the same file and unchanged
+    /// (<paramref name="stamp"/> is its stamp at the end of the check), for the copy it matched as well as for the file
+    /// about to be moved. Another program could have changed either, or moved a different file there, since. False
+    /// without a stamp.
     /// </summary>
     public static bool IsStillTheMatch(string path, FileStamp? stamp)
     {
-        if (stamp is null) return File.Exists(path);
+        if (stamp is null) return false;
         try
         {
             using var handle = File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
@@ -342,8 +355,8 @@ public static class DuplicateFinder
     /// Whether two files have exactly the same content, compared byte by byte now (no hashes, no cache).
     /// False if either can't be read or is not <paramref name="expectedSize"/> bytes long, and false when it can't be
     /// told that neither changed during the comparison: a write to a part already compared would go unseen.
-    /// Windows keeps writers out while the files are open. Elsewhere each file's stamp must be trusted (the change
-    /// time) and the same before and after. File systems keep that time in steps (up to 2 s on FAT), so a file
+    /// Both files need a stamp (see <see cref="CanCheckCopies"/>), the same before and after. Windows also keeps
+    /// writers out while the files are open; elsewhere each stamp must be trusted (the change time). File systems keep that time in steps (up to 2 s on FAT), so a file
     /// changed less than <see cref="CompareSettleTime"/> ago is first left to settle, and any later write then moves it.
     /// Writes the kernel only learns of later (through a memory map, or from another computer on a network drive)
     /// can still go unnoticed.
@@ -358,7 +371,7 @@ public static class DuplicateFinder
 
     private enum Comparison { Identical, Different, InUse }
 
-    private static async Task<(Comparison Result, FileStamp? SecondStamp)> CompareAsync(string first, string second,
+    private static async Task<(Comparison Result, FileStamp? FirstStamp, FileStamp? SecondStamp)> CompareAsync(string first, string second,
         ulong expectedSize, CancellationToken ct, Action<long>? onCompared)
     {
         var a = ArrayPool<byte>.Shared.Rent(FullBufferSize);
@@ -368,7 +381,7 @@ public static class DuplicateFinder
             using var left = OpenForComparison(first);
             using var right = OpenForComparison(second);
             if ((ulong)RandomAccess.GetLength(left) != expectedSize || (ulong)RandomAccess.GetLength(right) != expectedSize)
-                return (Comparison.Different, null);
+                return (Comparison.Different, null, null);
             var leftBefore = StorageInfo.GetStamp(left);
             var rightBefore = StorageInfo.GetStamp(right);
             if (!OperatingSystem.IsWindows())
@@ -378,7 +391,7 @@ public static class DuplicateFinder
                 {
                     await Task.Delay(wait, ct);
                     if (StorageInfo.GetStamp(left) != leftBefore || StorageInfo.GetStamp(right) != rightBefore)
-                        return (Comparison.Different, null); // being written to right now
+                        return (Comparison.Different, null, null); // being written to right now
                 }
             }
             long offset = 0;
@@ -387,24 +400,25 @@ public static class DuplicateFinder
                 var readLeft = await ReadFullyAsync(left, a.AsMemory(0, FullBufferSize), offset, ct);
                 var readRight = await ReadFullyAsync(right, b.AsMemory(0, FullBufferSize), offset, ct);
                 if (readLeft != readRight || !a.AsSpan(0, readLeft).SequenceEqual(b.AsSpan(0, readRight)))
-                    return (Comparison.Different, null);
+                    return (Comparison.Different, null, null);
                 if (readLeft == 0) break;
                 offset += readLeft;
                 onCompared?.Invoke(readLeft);
             }
+            var leftAfter = StorageInfo.GetStamp(left);
             var rightAfter = StorageInfo.GetStamp(right);
             var same = (ulong)offset == expectedSize &&
                        (ulong)RandomAccess.GetLength(left) == expectedSize && (ulong)RandomAccess.GetLength(right) == expectedSize &&
-                       Unchanged(leftBefore, StorageInfo.GetStamp(left)) && Unchanged(rightBefore, rightAfter);
-            return same ? (Comparison.Identical, rightAfter) : (Comparison.Different, null);
+                       Unchanged(leftBefore, leftAfter) && Unchanged(rightBefore, rightAfter);
+            return same ? (Comparison.Identical, leftAfter, rightAfter) : (Comparison.Different, null, null);
         }
         catch (IOException ex) when (OperatingSystem.IsWindows() && (ex.HResult & 0xFFFF) is ErrorSharingViolation or ErrorLockViolation)
         {
-            return (Comparison.InUse, null); // open for writing in another program
+            return (Comparison.InUse, null, null); // open for writing in another program
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            return (Comparison.Different, null);
+            return (Comparison.Different, null, null);
         }
         finally
         {

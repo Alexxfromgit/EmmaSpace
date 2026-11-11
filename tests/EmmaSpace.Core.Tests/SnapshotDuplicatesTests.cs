@@ -254,6 +254,87 @@ public class SnapshotDuplicatesTests
         Assert.True(error is InvalidDataException or IOException, error?.GetType().FullName);
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public void Bytes_after_the_compressed_data_are_rejected(bool withDuplicates, bool seekable)
+    {
+        using var f = new Fixture();
+        using var stream = new MemoryStream();
+        SnapshotFile.Save(f.Tree, stream, withDuplicates ? f.Result() : null);
+        var bytes = stream.ToArray();
+        Assert.Equal(f.Tree.Count, Load(bytes).Tree.Count); // loads as saved
+
+        // Brotli stops at its end marker, so these would go unseen if only the decoded data were checked.
+        var longer = (byte[])[.. bytes, 0x00, 0x42];
+        Assert.Throws<InvalidDataException>(() => Load(longer));
+        Assert.Throws<InvalidDataException>(() => Load([.. bytes, 0x00]));
+
+        LoadedSnapshot Load(byte[] data) => SnapshotFile.LoadSnapshot(seekable ? new MemoryStream(data) : new ForwardOnly(data));
+    }
+
+    [Fact]
+    public void A_version_1_snapshot_with_more_data_after_the_names_is_rejected()
+    {
+        using var f = new Fixture();
+        using var stream = new MemoryStream();
+        SnapshotFile.Save(f.Tree, stream);
+        Assert.Equal(1, VersionOf(stream));
+        var bytes = stream.ToArray();
+        var body = ChecksumOffset(f.Tree); // version 1 has no checksum: the compressed data starts here
+
+        using var decoded = new MemoryStream();
+        using (var brotli = new BrotliStream(new MemoryStream(bytes, body, bytes.Length - body), CompressionMode.Decompress))
+            brotli.CopyTo(decoded);
+        decoded.WriteByte(0);
+        using var rewritten = new MemoryStream();
+        rewritten.Write(bytes, 0, body);
+        using (var brotli = new BrotliStream(rewritten, CompressionLevel.Fastest, leaveOpen: true))
+            brotli.Write(decoded.ToArray());
+
+        rewritten.Position = 0;
+        Assert.Throws<InvalidDataException>(() => SnapshotFile.LoadSnapshot(rewritten));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void A_cut_off_snapshot_is_rejected(bool withDuplicates)
+    {
+        using var f = new Fixture();
+        using var stream = new MemoryStream();
+        SnapshotFile.Save(f.Tree, stream, withDuplicates ? f.Result() : null);
+        var bytes = stream.ToArray();
+        var error = Record.Exception(() => SnapshotFile.LoadSnapshot(new MemoryStream(bytes, 0, bytes.Length - 1)));
+        Assert.True(error is InvalidDataException or IOException, error?.GetType().FullName);
+    }
+
+    /// <summary>A stream that can only be read forwards, a few bytes at a time, like a pipe.</summary>
+    private sealed class ForwardOnly(byte[] data) : Stream
+    {
+        private int _position;
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            var n = Math.Min(Math.Min(count, 7), data.Length - _position);
+            data.AsSpan(_position, n).CopyTo(buffer.AsSpan(offset));
+            _position += n;
+            return n;
+        }
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
     /// <summary>Where the header ends (and a version 2 checksum starts): after the fixed fields and the root path.</summary>
     private static int ChecksumOffset(FileTree tree) =>
         8 + 4 + 1 + Encoding.UTF8.GetByteCount(tree.Info.RootPath) + 8 + 8 + 4 + 4 + 4 + 4 + 4 + 4;

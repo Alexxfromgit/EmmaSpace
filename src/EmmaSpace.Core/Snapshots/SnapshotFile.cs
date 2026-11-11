@@ -289,17 +289,13 @@ public static class SnapshotFile
         EsNode[] nodes;
         char[] names;
         byte[]? section = null;
-        try
+        using (var brotli = new BrotliReader(input))
         {
-            using var brotli = new BrotliStream(input, CompressionMode.Decompress, leaveOpen: true);
             nodes = ReadArray<EsNode>(brotli, nodeCount);
             names = ReadArray<char>(brotli, namesLength);
             if (version == DuplicatesVersion) section = ReadToEnd(brotli, MaxSectionBytes(nodeCount));
-        }
-        catch (InvalidOperationException)
-        {
-            // How BrotliStream reports data it can't decode.
-            throw new InvalidDataException("Snapshot data is damaged.");
+            // Nothing may follow, neither in the data (version 1 ends with the names) nor after it in the file.
+            brotli.EnsureEnded();
         }
 
         DuplicateResult? duplicates = null;

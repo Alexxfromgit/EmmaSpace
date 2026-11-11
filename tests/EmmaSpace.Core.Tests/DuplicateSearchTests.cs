@@ -490,9 +490,9 @@ public partial class DuplicateSearchTests
 
     // The check before a copy is moved to the Trash
 
-    /// <summary>Outside Windows a comparison is trusted only with the file stamps of the native engine.</summary>
+    /// <summary>A comparison is trusted only with the file stamps of the native engine.</summary>
     private static void RequireComparableFiles() =>
-        Assert.SkipUnless(OperatingSystem.IsWindows() || NativeEngine.IsAvailable, "File stamps need the native engine.");
+        Assert.SkipUnless(DuplicateFinder.CanCheckCopies, "File stamps need the native engine.");
 
     [Fact]
     public async Task Copies_are_compared_byte_by_byte()
@@ -527,6 +527,7 @@ public partial class DuplicateSearchTests
         Assert.Equal(two, found.Match);
         Assert.False(found.InUse);
         Assert.True(DuplicateFinder.IsStillTheMatch(two, found.MatchStamp));
+        Assert.True(DuplicateFinder.IsStillTheMatch(one, found.TargetStamp));
         Assert.All(progress.Reports, p => Assert.InRange(p, 0, 1));
     }
 
@@ -575,8 +576,29 @@ public partial class DuplicateSearchTests
         // Same name and content, but another file: the one that was compared is gone.
         var other = temp.File("other.bin", content);
         File.Move(other, two, overwrite: true);
-        Assert.Equal(!NativeEngine.IsAvailable, DuplicateFinder.IsStillTheMatch(two, found.MatchStamp));
+        Assert.False(DuplicateFinder.IsStillTheMatch(two, found.MatchStamp));
         Assert.False(DuplicateFinder.IsStillTheMatch(Path.Combine(temp.Root, "missing.bin"), found.MatchStamp));
+        Assert.False(DuplicateFinder.IsStillTheMatch(two, stamp: null));
+    }
+
+    [Fact]
+    public async Task The_file_to_move_must_still_be_the_one_compared()
+    {
+        RequireComparableFiles();
+        using var temp = Files(out var content);
+        var ct = TestContext.Current.CancellationToken;
+        var one = Path.Combine(temp.Root, "a", "one.bin");
+        var two = Path.Combine(temp.Root, "b", "two.bin");
+        var found = await DuplicateFinder.FindIdenticalCopyAsync(one, Big, [two], null, ct);
+        Assert.Equal(two, found.Match);
+        Assert.True(DuplicateFinder.IsStillTheMatch(one, found.TargetStamp));
+
+        // Rewritten after the check with the same size: no longer the file that was found identical.
+        using (var writer = new FileStream(one, FileMode.Open, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete))
+            writer.WriteByte((byte)(content[0] ^ 0xFF));
+        Assert.Equal(Big, new FileInfo(one).Length);
+        Assert.False(DuplicateFinder.IsStillTheMatch(one, found.TargetStamp));
+        Assert.True(DuplicateFinder.IsStillTheMatch(two, found.MatchStamp));
     }
 
     [Fact]
@@ -601,6 +623,9 @@ public partial class DuplicateSearchTests
     [InlineData(@"C:\Users\emma\Documents\Recycle Bin notes.txt", false)]
     [InlineData("/home/emma/Trash/file", false)]
     [InlineData("/home/emma/.Trashy/file", false)]
+    [InlineData("/media/emma/disk/.Trash-backup/file", false)]
+    [InlineData("/media/emma/disk/.Trash-/file", false)]
+    [InlineData("/media/emma/disk/.Trash-1000x/file", false)]
     public void Recycle_bins_and_trash_folders_are_recognized(string path, bool inTrash) =>
         Assert.Equal(inTrash, TrashFolders.Contains(path, dataHome: null));
 

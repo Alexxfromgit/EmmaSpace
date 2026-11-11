@@ -632,6 +632,13 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
             : copies.Where(c => c != node && c > FileTree.Root && c < tree.Count && !tree.Nodes[c].IsDeleted)
                 .Select(tree.GetPath).Where(p => !TrashFolders.Contains(p)).ToList();
         var bin = FileActions.TrashName;
+        if (others.Count > 0 && !DuplicateFinder.CanCheckCopies)
+        {
+            await _dialogs.ShowErrorAsync($"Not moved to {bin}",
+                $"Emma Space can't check that \"{name}\" is still identical to another copy: the check needs its native " +
+                $"engine, which didn't load. Nothing was moved.\n\n{path}");
+            return;
+        }
         var check = copies is null ? ""
             : others.Count > 0 ? "\n\nEmma Space first checks that it is still identical to another copy."
             : "\n\nIt is the last copy left of these duplicates: the others were moved or removed.";
@@ -672,8 +679,10 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
                     $"and try again.\n\n{path}");
                 return;
             }
-            // The copy it matched must still be that file: only moves made here wait for the check, not other programs.
-            if (found?.Match is not { } identical || !DuplicateFinder.IsStillTheMatch(identical, found.MatchStamp))
+            // Both files must still be the ones compared, unchanged: only moves made here wait for the check, not
+            // other programs, which could have changed either or put another file in its place since.
+            if (found?.Match is not { } identical || !DuplicateFinder.IsStillTheMatch(identical, found.MatchStamp) ||
+                !DuplicateFinder.IsStillTheMatch(path, found.TargetStamp))
             {
                 await _dialogs.ShowErrorAsync($"Not moved to {bin}",
                     $"\"{name}\" is no longer identical to any other copy outside the {bin}: a file changed since they were " +
