@@ -54,8 +54,9 @@ inline constexpr uint32_t kExtRequested = kExtCloneId | kExtFlags;
 inline constexpr uint32_t kCommonNeeded =
     kCmnName | kCmnDevId | kCmnObjType | kCmnModTime | kCmnAccTime | kCmnAccessMask | kCmnFlags | kCmnFileId;
 inline constexpr uint32_t kFileNeeded = kFileLinkCount | kFileAllocSize | kFileDataLength;
-// A folder whose mount status is unknown could be a mount point (whose record describes the covered folder)
-// or an autofs trigger, so its record alone is not trusted.
+// A folder whose mount status is unknown could be a mount point, whose record describes the covered folder,
+// so it is described with fstatat() instead, as the readdir walker always did. (Like that walker, it then can't
+// tell an autofs trigger; the kernel returns the status for every folder in practice.)
 inline constexpr uint32_t kDirNeeded = kDirMountStatus;
 
 // fsobj_type_t (<sys/vnode.h>) and ATTR_DIR_MOUNTSTATUS values.
