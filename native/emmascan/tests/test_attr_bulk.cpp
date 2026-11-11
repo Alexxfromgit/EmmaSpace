@@ -33,15 +33,17 @@ struct RecordBuilder {
     uint32_t link_count = 1;
     int64_t alloc_size = 8192;
     int64_t data_length = 5000;
+    int64_t data_alloc_size = 4096;
     uint32_t ext = 0;
     uint64_t clone_id = 0;
     uint64_t ext_flags = 0;
 
     std::vector<char> build() const {
         std::vector<char> out(4, 0); // length, filled in at the end
-        auto put = [&out](const auto& v) {
-            const auto* p = reinterpret_cast<const char*>(&v);
-            out.insert(out.end(), p, p + sizeof(v));
+        auto put = [&out](const auto& v) { // resize + memcpy: GCC 13 warns (wrongly) about insert() here
+            const size_t at = out.size();
+            out.resize(at + sizeof(v));
+            std::memcpy(out.data() + at, &v, sizeof(v));
         };
         const uint32_t returned[5] = {common, 0, dir, file, ext};
         for (uint32_t w : returned) put(w);
@@ -63,6 +65,7 @@ struct RecordBuilder {
         if (file & kFileLinkCount) put(link_count);
         if (file & kFileAllocSize) put(alloc_size);
         if (file & kFileDataLength) put(data_length);
+        if (file & kFileDataAllocSize) put(data_alloc_size);
         if (ext & kExtCloneId) put(clone_id);
         if (ext & kExtFlags) put(ext_flags);
         if (common & kCmnName) {
@@ -127,6 +130,7 @@ TEST_CASE("bulk: a directory record carries its mount status and needs no file a
 
 TEST_CASE("bulk: clone attributes come after the file attributes") {
     RecordBuilder pure;
+    pure.file |= kFileDataAllocSize;
     pure.ext = kExtCloneId | kExtFlags;
     pure.clone_id = 9001;
     pure.ext_flags = kMayShareBlocks | kSharesAllBlocks;
@@ -135,6 +139,7 @@ TEST_CASE("bulk: clone attributes come after the file attributes") {
     uint32_t length = 0;
     REQUIRE(decode(buf, r, length) == Decode::ok);
     CHECK(r.data_length == 5000); // still where it was
+    CHECK(r.data_alloc_size == 4096);
     CHECK(r.clone_id == 9001);
     CHECK(r.may_share_blocks());
     CHECK(r.is_pure_clone());
@@ -172,6 +177,31 @@ TEST_CASE("bulk: records follow each other by their length") {
     REQUIRE(decode_record(buf.data() + length, buf.size() - length, r, length) == Decode::ok);
     CHECK(r.name == "second");
     CHECK(r.file_id == 43);
+}
+
+TEST_CASE("bulk: the file type comes from the object type, not the access mask") {
+    RecordBuilder b;
+    b.mode = 0644;          // permission bits only, as getattrlist(2) promises
+    b.obj_type = 5;         // VLNK
+    const auto buf = b.build();
+    Record r;
+    uint32_t length = 0;
+    REQUIRE(decode(buf, r, length) == Decode::ok);
+    CHECK(r.st_mode() == (0120000u | 0644u));
+    CHECK(r.complete());
+
+    b.mode = 0100755;       // type bits that disagree with the object type are dropped
+    b.obj_type = kTypeDirectory;
+    b.dir = kDirMountStatus;
+    b.file = 0;
+    const auto buf2 = b.build();
+    REQUIRE(decode(buf2, r, length) == Decode::ok);
+    CHECK(r.st_mode() == (0040000u | 0755u));
+
+    b.obj_type = 99;        // unknown type: described with fstatat() instead
+    const auto buf3 = b.build();
+    REQUIRE(decode(buf3, r, length) == Decode::ok);
+    CHECK_FALSE(r.complete());
 }
 
 TEST_CASE("bulk: an entry with an error is reported, not trusted") {
@@ -270,8 +300,8 @@ TEST_CASE("bulk: broken lengths and offsets are refused") {
 }
 
 TEST_CASE("bulk: damaged batches never read outside the buffer") {
-    // Run under ASan in CI: random corruption and truncation of a valid batch must only ever give
-    // ok, skip or malformed.
+    // Random corruption and truncation of a valid batch must only ever give ok, skip or malformed; run
+    // the tests under ASan (see CONTRIBUTING) to catch any read outside the buffer.
     std::vector<char> batch;
     for (int i = 0; i < 8; ++i) {
         RecordBuilder b;

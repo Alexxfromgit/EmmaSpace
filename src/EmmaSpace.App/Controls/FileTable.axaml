@@ -8,9 +8,11 @@
     <TableViewColumn Header="Name" Width="3*">
       <TableViewColumn.CellTemplate>
         <DataTemplate x:DataType="vm:NodeItemViewModel">
-          <Grid ColumnDefinitions="16,*" ToolTip.Tip="{Binding Path}" Background="Transparent">
+          <Grid ColumnDefinitions="16,*,Auto" ToolTip.Tip="{Binding Path}" Background="Transparent">
             <Ellipse Width="8" Height="8" Fill="{Binding CategoryBrush}" VerticalAlignment="Center" HorizontalAlignment="Left" />
             <TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+            <TextBlock Grid.Column="2" Text=" ⧉" Classes="muted" IsVisible="{Binding IsClone}" VerticalAlignment="Center"
+                       ToolTip.Tip="Clone: shares disk space with other copies, so deleting it may free less than its size on disk" />
           </Grid>
         </DataTemplate>
       </TableViewColumn.CellTemplate>

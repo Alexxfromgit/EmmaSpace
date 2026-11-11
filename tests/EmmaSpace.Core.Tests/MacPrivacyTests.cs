@@ -16,6 +16,12 @@ public sealed class MacPrivacyTests
     [InlineData("/Users/emma/Library/Containers/com.apple.mail")]
     [InlineData("/Library")]
     [InlineData("/System/Volumes/Data")]
+    [InlineData("/system/volumes/data")]
+    [InlineData("/System")]
+    [InlineData("/System/Volumes")]
+    [InlineData("/System/Volumes/Data/Users/emma")]
+    [InlineData("/System/Volumes/Data/Users/emma/Library/Mail")]
+    [InlineData("/System/Volumes/Data/Library")]
     public void Scans_that_reach_private_data_get_the_hint(string root)
     {
         Assert.True(MacPrivacy.MayCoverProtectedData(root, Home));
@@ -27,6 +33,8 @@ public sealed class MacPrivacyTests
     [InlineData("/Users/emma/Librarian")] // a name that only starts like Library
     [InlineData("/Users/emmaline")]
     [InlineData("/Volumes/Backup")]
+    [InlineData("/System/Volumes/Data/Applications")]
+    [InlineData("/System/Volumes/Preboot")]
     [InlineData("")]
     public void Other_scans_do_not(string root)
     {

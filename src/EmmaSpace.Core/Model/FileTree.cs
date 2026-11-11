@@ -181,8 +181,8 @@ public sealed class FileTree : IDisposable
     }
 
     /// <summary>
-    /// True once a removal touched a file with other hard links: those bytes may still be in use
-    /// under another name, so totals are approximate until the next scan.
+    /// True once a removal touched a file with other hard links or an APFS clone: those bytes may still be in
+    /// use under another name or by another clone, so totals are approximate until the next scan.
     /// </summary>
     public bool SizesApproximate { get; private set; }
 

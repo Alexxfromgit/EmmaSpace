@@ -214,8 +214,9 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
     public partial bool ShowPrivacyHint { get; private set; }
 
     public static string PrivacyHintText { get; } =
-        "Some folders could not be read because macOS keeps them private (Mail, Messages, Safari and other apps' data). " +
-        "To include them, turn on Full Disk Access for Emma Space in System Settings, then rescan.";
+        "Some folders could not be read. macOS keeps Mail, Messages, Safari and other apps' data private unless Emma Space " +
+        "has Full Disk Access. To include them, add Emma Space under Full Disk Access in System Settings (with + if it " +
+        "isn't listed), turn it on, then quit and reopen Emma Space and scan again.";
 
     [RelayCommand]
     private async Task OpenPrivacySettingsAsync()

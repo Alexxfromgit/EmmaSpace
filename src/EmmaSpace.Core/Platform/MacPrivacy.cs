@@ -3,9 +3,9 @@ using System.Runtime.InteropServices;
 namespace EmmaSpace.Core.Platform;
 
 /// <summary>
-/// macOS keeps some data private (Mail, Messages, Safari, other apps' containers, Time Machine) unless the user gives an
-/// app Full Disk Access. Without it those folders count as "could not be read", so the app points the user to the
-/// setting.
+/// macOS keeps some data private (Mail, Messages, Safari, other apps' containers) unless the user gives an app Full Disk
+/// Access. Without it those folders count as "could not be read", so the app points the user to the setting. A new
+/// grant applies from the app's next start.
 /// </summary>
 public static partial class MacPrivacy
 {
@@ -33,17 +33,17 @@ public static partial class MacPrivacy
 
     /// <summary>
     /// True if a scan of <paramref name="root"/> reaches data macOS keeps private: the whole disk, the users' folders,
-    /// <paramref name="home"/> or a folder holding it, or anything in its Library.
+    /// <paramref name="home"/> or a folder holding it, or anything in its Library. Paths through the Data volume
+    /// (/System/Volumes/Data/Users/…) count like the usual ones, since that is where the firmlinked folders live.
     /// </summary>
     public static bool MayCoverProtectedData(string root, string home)
     {
         if (string.IsNullOrEmpty(root) || string.IsNullOrEmpty(home)) return false;
-        root = Normalize(root);
-        home = Normalize(home);
+        root = WithoutDataVolume(Normalize(root));
+        home = WithoutDataVolume(Normalize(home));
         var library = home == "/" ? "/Library" : home + "/Library";
         return IsSameOrInside(home, root) || IsSameOrInside(root, library) ||
-               IsSameOrInside("/Library/Application Support/com.apple.TCC", root) ||
-               root == "/System/Volumes/Data";
+               IsSameOrInside("/Library/Application Support/com.apple.TCC", root);
     }
 
     /// <summary>Opens the Full Disk Access pane. Throws IOException if System Settings could not be started.</summary>
@@ -54,6 +54,15 @@ public static partial class MacPrivacy
     {
         path = Path.TrimEndingDirectorySeparator(path);
         return path.Length == 0 ? "/" : path;
+    }
+
+    private const string DataVolume = "/System/Volumes/Data";
+
+    // /System/Volumes/Data/Users/emma is /Users/emma; /System and /System/Volumes hold the Data volume, like "/".
+    private static string WithoutDataVolume(string path)
+    {
+        if (IsSameOrInside(DataVolume, path)) return "/";
+        return path.StartsWith(DataVolume + "/", StringComparison.OrdinalIgnoreCase) ? path[DataVolume.Length..] : path;
     }
 
     // Folder names are case-insensitive on a default APFS volume.
