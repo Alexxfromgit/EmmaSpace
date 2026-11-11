@@ -8,6 +8,7 @@
 #include <map>
 #include <random>
 #include <string>
+#include <vector>
 
 #if !defined(_WIN32)
 #include <sys/stat.h>

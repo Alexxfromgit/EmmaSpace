@@ -244,14 +244,22 @@ private:
     }
 
     // readdir + one fstatat per entry. Takes ownership of `fd`. False if the folder could not be opened.
-    bool list_readdir(const WorkItem& item, int fd, Scratch& s) {
+    // `partial` is set when the listing broke off with an error: what was read is kept, as with list_bulk.
+    bool list_readdir(const WorkItem& item, int fd, Scratch& s, bool& partial) {
         DIR* dir = fdopendir(fd);
         if (!dir) {
             close(fd);
             return false;
         }
         std::unique_ptr<DIR, int (*)(DIR*)> dir_guard(dir, closedir); // also closes fd
-        while (dirent* d = readdir(dir)) {
+        for (;;) {
+            // readdir returns null at the end and after an error alike; only errno tells them apart.
+            errno = 0;
+            dirent* d = readdir(dir);
+            if (!d) {
+                if (errno != 0) partial = true;
+                break;
+            }
             if (std::strcmp(d->d_name, ".") == 0 || std::strcmp(d->d_name, "..") == 0) continue;
             struct stat st{};
             if (fstatat(dirfd(dir), d->d_name, &st, AT_SYMLINK_NOFOLLOW) != 0) continue; // vanished meanwhile
@@ -368,7 +376,7 @@ private:
             }
         }
 #endif
-        if (!listed && !list_readdir(item, fd.release(), s)) {
+        if (!listed && !list_readdir(item, fd.release(), s, partial)) {
             fail(item.node);
             return;
         }
