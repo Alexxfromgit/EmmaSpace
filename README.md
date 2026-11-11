@@ -43,6 +43,12 @@ status bar).
 signed, Windows SmartScreen asks you to confirm ("More info" → "Run anyway") and macOS needs
 right-click → Open the first time.
 
+On macOS, Mail, Messages, Safari, other apps' containers and Time Machine data stay private unless an
+app has **Full Disk Access**; without it they count as folders that could not be read. After such a
+scan Emma Space offers to open System Settings → Privacy & Security → Full Disk Access; turn it on for
+Emma Space and rescan. The setting belongs to the app's signature, so until releases are signed macOS
+may ask again after an update. Run from a terminal (`dotnet run`), the terminal's setting applies.
+
 ## Features
 
 | Area | What you get |
@@ -217,7 +223,7 @@ branding/             icon source art (make-icon.ps1 and make-icns.py build the 
 
 ## Roadmap
 
-1. **macOS**: Full Disk Access guidance and a signed, notarized `.app`
+1. **macOS**: a signed, notarized `.app`
    via `vpk pack` on macOS. The engine now runs and is tested on a Mac (Apple silicon), including
    Trash and the firmlink handling; Intel Macs are so far only built by CI.
 2. **Code signing**: sign the Windows installer and sign and notarize the macOS app; the release
