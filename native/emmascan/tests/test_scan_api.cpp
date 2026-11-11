@@ -8,11 +8,18 @@
 #include <map>
 #include <random>
 #include <string>
+#include <thread>
 #include <vector>
 
-#if !defined(_WIN32)
-#include <sys/stat.h>
-#include <unistd.h>
+#if defined(_WIN32)
+#  ifndef NOMINMAX
+#    define NOMINMAX
+#  endif
+#  include <windows.h>
+#else
+#  include <fcntl.h>
+#  include <sys/stat.h>
+#  include <unistd.h>
 #endif
 
 namespace fs = std::filesystem;
@@ -55,6 +62,126 @@ std::u16string_view name_of(const es_result& r, uint32_t node) {
 } // namespace
 
 TEST_CASE("version matches the header") { CHECK(es_get_version() == ES_ABI_VERSION); }
+
+TEST_CASE("storage kind of an existing folder is one of the known kinds") {
+    TempTree tree;
+    const auto path = tree.path16();
+    uint32_t kind = 99;
+    uint64_t device = 0;
+    REQUIRE(es_get_storage_kind(reinterpret_cast<const es_char*>(path.c_str()), &kind, &device) == ES_OK);
+    CHECK(kind <= ES_STORAGE_NETWORK);
+    CHECK(device != 0);
+
+    // Two folders of one file system report the same device.
+    const auto w = (tree.root / "docs").wstring();
+    const std::u16string docs(w.begin(), w.end());
+    uint32_t docs_kind = 99;
+    uint64_t docs_device = 0;
+    REQUIRE(es_get_storage_kind(reinterpret_cast<const es_char*>(docs.c_str()), &docs_kind, &docs_device) == ES_OK);
+    CHECK(docs_kind == kind);
+    CHECK(docs_device == device);
+}
+
+TEST_CASE("storage kind of a missing path is unknown, not an error") {
+    TempTree tree;
+    const auto w = (tree.root / "does-not-exist" / "x").wstring();
+    const std::u16string path(w.begin(), w.end());
+    uint32_t kind = 99;
+    // On Windows the volume of a missing path can still be told, so either answer is fine; it must not fail.
+    REQUIRE(es_get_storage_kind(reinterpret_cast<const es_char*>(path.c_str()), &kind, nullptr) == ES_OK);
+    CHECK(kind <= ES_STORAGE_NETWORK);
+}
+
+TEST_CASE("storage kind rejects missing arguments") {
+    const std::u16string path = u"x";
+    uint32_t kind = 99;
+    CHECK(es_get_storage_kind(nullptr, &kind, nullptr) == ES_ERR_INVALID_ARG);
+    CHECK(kind == ES_STORAGE_UNKNOWN);
+    CHECK(es_get_storage_kind(reinterpret_cast<const es_char*>(u""), &kind, nullptr) == ES_ERR_INVALID_ARG);
+    CHECK(es_get_storage_kind(reinterpret_cast<const es_char*>(path.c_str()), nullptr, nullptr) == ES_ERR_INVALID_ARG);
+}
+
+namespace {
+
+// Opens a file read-only the way the app does and returns its handle as the API takes it.
+struct ReadOnlyFile {
+#if defined(_WIN32)
+    HANDLE handle;
+    explicit ReadOnlyFile(const fs::path& p)
+        : handle(CreateFileW(p.wstring().c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                             nullptr, OPEN_EXISTING, 0, nullptr)) {}
+    ~ReadOnlyFile() {
+        if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
+    }
+    intptr_t value() const { return reinterpret_cast<intptr_t>(handle); }
+#else
+    int fd;
+    explicit ReadOnlyFile(const fs::path& p) : fd(open(p.c_str(), O_RDONLY)) {}
+    ~ReadOnlyFile() {
+        if (fd >= 0) close(fd);
+    }
+    intptr_t value() const { return fd; }
+#endif
+};
+
+es_file_stamp stamp_of(const fs::path& p) {
+    ReadOnlyFile file(p);
+    es_file_stamp stamp{};
+    REQUIRE(es_get_file_stamp(file.value(), &stamp) == ES_OK);
+    return stamp;
+}
+
+} // namespace
+
+TEST_CASE("file stamp identifies a file and sees its changes") {
+    TempTree tree;
+    const auto top = tree.root / "top.bin";
+    const auto before = stamp_of(top);
+    CHECK(before.size == 5000);
+    CHECK((before.file_id_low != 0 || before.file_id_high != 0));
+    CHECK(before.volume != 0);
+    CHECK(before.mtime_ns > 0);
+    CHECK(before.ctime_ns > 0);
+
+    const auto other = stamp_of(tree.root / "docs" / "a.txt");
+    CHECK(other.volume == before.volume);
+    CHECK((other.file_id_low != before.file_id_low || other.file_id_high != before.file_id_high));
+
+    // Rewritten with the same size and its last-write time put back: the change time still moves on.
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    TempTree::write(top, 5000);
+    const auto mtime = fs::last_write_time(top);
+    fs::last_write_time(top, mtime - std::chrono::hours(1));
+    fs::last_write_time(top, mtime);
+    const auto after = stamp_of(top);
+    CHECK(after.size == before.size);
+    CHECK(after.file_id_low == before.file_id_low);
+    CHECK(after.ctime_ns != before.ctime_ns);
+#if defined(_WIN32)
+    // The USN moves on too, where the volume keeps a change journal (the system drive does).
+    if (before.usn != 0) {
+        CHECK(after.usn != before.usn);
+        CHECK((before.flags & ES_STAMP_TRUSTED) != 0);
+    } else {
+        CHECK((before.flags & ES_STAMP_TRUSTED) == 0);
+    }
+#else
+    CHECK((before.flags & ES_STAMP_TRUSTED) != 0);
+    CHECK(before.usn == 0);
+#endif
+}
+
+TEST_CASE("file stamp rejects a bad handle or missing output") {
+    es_file_stamp stamp{};
+#if defined(_WIN32)
+    CHECK(es_get_file_stamp(reinterpret_cast<intptr_t>(INVALID_HANDLE_VALUE), &stamp) == ES_ERR_INVALID_ARG);
+#else
+    CHECK(es_get_file_stamp(-1, &stamp) == ES_ERR_INVALID_ARG);
+#endif
+    TempTree tree;
+    ReadOnlyFile file(tree.root / "top.bin");
+    CHECK(es_get_file_stamp(file.value(), nullptr) == ES_ERR_INVALID_ARG);
+}
 
 TEST_CASE("scan produces a correct tree for a small folder") {
     TempTree tree;

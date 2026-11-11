@@ -407,11 +407,11 @@
                       <ComboBox ItemsSource="{x:Static vm:DuplicatesViewModel.MinSizeOptions}"
                                 SelectedIndex="{Binding Duplicates.MinSizeIndex}" MinWidth="110" />
                       <Button Classes="accent" Content="Find duplicates" Command="{Binding Duplicates.FindCommand}"
-                              IsVisible="{Binding !Duplicates.IsBusy}" />
-                      <Button Content="Stop" Command="{Binding Duplicates.StopCommand}" IsVisible="{Binding Duplicates.IsBusy}"
+                              IsVisible="{Binding !Duplicates.IsWorking}" />
+                      <Button Content="Stop" Command="{Binding Duplicates.StopCommand}" IsVisible="{Binding Duplicates.IsWorking}"
                               CornerRadius="8" Padding="16,7" />
                     </StackPanel>
-                    <ProgressBar Classes="usage" Value="{Binding Duplicates.ProgressValue}" Maximum="100" IsVisible="{Binding Duplicates.IsBusy}" />
+                    <ProgressBar Classes="usage" Value="{Binding Duplicates.ProgressValue}" Maximum="100" IsVisible="{Binding Duplicates.IsWorking}" />
                     <TextBlock Text="{Binding Duplicates.Status}" Classes="muted" TextWrapping="Wrap" />
                   </StackPanel>
                   <Grid RowDefinitions="*,10,Auto,*" IsVisible="{Binding Duplicates.HasRun}">

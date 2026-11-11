@@ -30,7 +30,7 @@
 extern "C" {
 #endif
 
-#define ES_ABI_VERSION 1u
+#define ES_ABI_VERSION 2u
 #define ES_NONE 0xFFFFFFFFu
 
 typedef uint16_t es_char; /* UTF-16 code unit */
@@ -62,6 +62,13 @@ typedef enum es_scan_phase {
     ES_PHASE_FINALIZING = 2,
     ES_PHASE_DONE = 3
 } es_scan_phase;
+
+typedef enum es_storage_kind {
+    ES_STORAGE_UNKNOWN = 0,
+    ES_STORAGE_SSD = 1,     /* no seek penalty (solid state): many reads at once are fastest */
+    ES_STORAGE_HDD = 2,     /* rotational disk: reads should be few at a time and in order */
+    ES_STORAGE_NETWORK = 3  /* network share (or a VM's shared folder) */
+} es_storage_kind;
 
 /* es_scan_options.flags */
 #define ES_SCAN_FOLLOW_REPARSE 0x1u
@@ -151,6 +158,36 @@ ES_API void ES_CALL es_scan_free(es_scan* scan);
 
 /* Moves a file or directory to the Recycle Bin / Trash. */
 ES_API es_status ES_CALL es_move_to_trash(const es_char* path);
+
+/* Reports what kind of storage holds path (an existing file or folder), to choose how many reads to
+   issue at once. *out_kind (es_storage_kind) is ES_STORAGE_UNKNOWN when it can't be told.
+   *out_device (optional) identifies the file system: paths with equal values are on the same one
+   (0 when unknown). Only the arguments can make it fail. Opens nothing for reading or writing. */
+ES_API es_status ES_CALL es_get_storage_kind(const es_char* path, uint32_t* out_kind, uint64_t* out_device);
+
+/* es_file_stamp.flags */
+#define ES_STAMP_TRUSTED 0x1u /* every change of the content moves the stamp on and no program can move it back:
+                                 st_ctime on POSIX; on Windows only when the file has a change-journal USN */
+
+/* Identity and timestamps of an open file, read from its handle (Windows HANDLE, POSIX file descriptor),
+   to tell whether it has changed since an earlier look. Times are nanoseconds since the Unix epoch
+   (100 ns steps on Windows); 0 where the file system has none. */
+typedef struct es_file_stamp {
+    uint64_t volume;       /* volume serial number (Windows) or st_dev */
+    uint64_t file_id_low;  /* file ID (Windows, low 64 bits of the 128-bit ID) or st_ino */
+    uint64_t file_id_high; /* high 64 bits of the Windows file ID (ReFS); 0 elsewhere */
+    uint64_t size;
+    int64_t mtime_ns;      /* last write; programs can set it back */
+    int64_t ctime_ns;      /* last change of content or metadata: st_ctime, which only the kernel sets, or
+                              Windows' ChangeTime, which programs CAN set back (SetFileInformationByHandle) */
+    uint64_t usn;          /* Windows: the file's update sequence number in the NTFS/ReFS change journal, moved on
+                              by every write, time change and close and settable by no program; 0 when the
+                              volume keeps no journal, and on other systems */
+    uint32_t flags;        /* ES_STAMP_* */
+    uint32_t reserved;
+} es_file_stamp;
+
+ES_API es_status ES_CALL es_get_file_stamp(intptr_t handle, es_file_stamp* out_stamp);
 
 #ifdef __cplusplus
 }
