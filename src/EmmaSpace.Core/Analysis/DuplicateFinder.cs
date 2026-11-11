@@ -12,9 +12,22 @@ public sealed record DuplicateOptions
     public int MaxParallelism { get; init; } = Math.Clamp(Environment.ProcessorCount, 2, 8);
 }
 
-public sealed record DuplicateGroup(ulong FileSize, IReadOnlyList<int> Nodes)
+/// <param name="SharingCount">Members that share their blocks with other files (<see cref="NodeFlags.Clone"/>).</param>
+public sealed record DuplicateGroup(ulong FileSize, IReadOnlyList<int> Nodes, int SharingCount = 0)
 {
-    public ulong WastedBytes => FileSize * (ulong)(Nodes.Count - 1);
+    public ulong WastedBytes => Reclaimable(FileSize, Nodes.Count, SharingCount);
+
+    /// <summary>
+    /// What deleting all but one of <paramref name="count"/> identical files would free. A file that shares its blocks
+    /// with others (an APFS clone) frees nothing, because another file keeps them in use; when any member does, the
+    /// copy that stays can be one of those, so every other member counts.
+    /// </summary>
+    public static ulong Reclaimable(ulong fileSize, int count, int sharing)
+    {
+        if (count < 2) return 0;
+        var freeing = sharing > 0 ? count - sharing : count - 1;
+        return fileSize * (ulong)Math.Max(freeing, 0);
+    }
 }
 
 public readonly record struct DuplicateProgress(string Stage, long Done, long Total);
@@ -56,7 +69,7 @@ public static class DuplicateFinder
             options, progress, ct);
 
         return complete.Concat(fullGroups)
-            .Select(g => new DuplicateGroup(tree.Nodes[g[0]].Size, g))
+            .Select(g => new DuplicateGroup(tree.Nodes[g[0]].Size, g, g.Count(n => (tree.Nodes[n].Flags & NodeFlags.Clone) != 0)))
             .OrderByDescending(g => g.WastedBytes)
             .ToList();
     }

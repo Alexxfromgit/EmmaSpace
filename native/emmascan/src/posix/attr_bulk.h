@@ -5,7 +5,8 @@
 //
 // Record layout, as the kernel packs it when FSOPT_PACK_INVAL_ATTRS is not set:
 //   u32 length (whole record)  attribute_set_t returned  [u32 error]  then each returned attribute in bit
-//   order, common attributes first, then directory, then file attributes. Only attributes whose bit is in
+//   order, common attributes first, then directory, then file attributes, then (with
+//   FSOPT_ATTR_CMN_EXTENDED) the extended common ones in the fork slot. Only attributes whose bit is in
 //   `returned` are present. Values are 4-byte aligned, so 8-byte values are read with memcpy.
 
 #include <cstddef>
@@ -30,12 +31,23 @@ inline constexpr uint32_t kDirMountStatus = 0x00000004u;
 inline constexpr uint32_t kFileLinkCount = 0x00000001u;
 inline constexpr uint32_t kFileAllocSize = 0x00000004u;
 inline constexpr uint32_t kFileDataLength = 0x00000200u;
+// ATTR_CMNEXT_*: extended common attributes, passed in the fork bitmap with FSOPT_ATTR_CMN_EXTENDED.
+inline constexpr uint32_t kExtPrivateSize = 0x00000008u; // bytes not shared with any other file (decoded, not requested)
+inline constexpr uint32_t kExtCloneId = 0x00000100u;     // the same for every pure clone of a file
+inline constexpr uint32_t kExtFlags = 0x00000200u;       // EF_* below
+
+// ATTR_CMNEXT_EXT_FLAGS values (APFS clones).
+inline constexpr uint64_t kMayShareBlocks = 0x00000001u; // EF_MAY_SHARE_BLOCKS: some blocks may be shared
+inline constexpr uint64_t kSharesAllBlocks = 0x00000040u; // EF_SHARES_ALL_BLOCKS: a pure clone
 
 // What the walker asks for. Everything else is left out so records stay small.
 inline constexpr uint32_t kCommonRequested = kCmnReturnedAttrs | kCmnName | kCmnDevId | kCmnObjType | kCmnModTime |
                                              kCmnAccTime | kCmnAccessMask | kCmnFlags | kCmnFileId | kCmnError;
 inline constexpr uint32_t kDirRequested = kDirMountStatus;
 inline constexpr uint32_t kFileRequested = kFileLinkCount | kFileAllocSize | kFileDataLength;
+// Not the private size: APFS works it out from the extents, which made listing ~70% slower. A pure clone
+// shares every block, so it owns nothing alone anyway.
+inline constexpr uint32_t kExtRequested = kExtCloneId | kExtFlags;
 
 // Without these the entry is described with fstatat() instead.
 inline constexpr uint32_t kCommonNeeded =
@@ -71,8 +83,17 @@ struct Record {
     uint32_t link_count = 0;
     int64_t alloc_size = 0;
     int64_t data_length = 0;
+    uint32_t ext = 0;      // returned extended (ATTR_CMNEXT_*) bits
+    int64_t private_size = 0;
+    uint64_t clone_id = 0;
+    uint64_t ext_flags = 0;
 
     bool is_directory() const { return obj_type == kTypeDirectory; }
+
+    // A file that may share blocks with others (an APFS clone, or a clone that was changed since).
+    bool may_share_blocks() const { return (ext & kExtFlags) && (ext_flags & kMayShareBlocks); }
+    // Every block is shared with the other files of the same clone id, so none of them owns any alone.
+    bool is_pure_clone() const { return may_share_blocks() && (ext_flags & kSharesAllBlocks) && (ext & kExtCloneId); }
 
     // True when every attribute the walker needs was returned. If not, the caller falls back to fstatat().
     bool complete() const {
@@ -127,10 +148,11 @@ inline Decode decode_record(const char* data, size_t available, Record& out, uin
     out.common = returned[0];
     out.dir = returned[2];
     out.file = returned[3];
+    out.ext = returned[4];
 
     // Anything outside what was asked for would shift every later field.
     if ((out.common & ~kCommonRequested) != 0 || returned[1] != 0 || (out.dir & ~kDirRequested) != 0 ||
-        (out.file & ~kFileRequested) != 0 || returned[4] != 0)
+        (out.file & ~kFileRequested) != 0 || (out.ext & ~kExtRequested) != 0)
         return Decode::malformed;
 
     if ((out.common & kCmnError) && !r.read(out.error)) return Decode::malformed;
@@ -161,6 +183,9 @@ inline Decode decode_record(const char* data, size_t available, Record& out, uin
     if ((out.file & kFileLinkCount) && !r.read(out.link_count)) return Decode::malformed;
     if ((out.file & kFileAllocSize) && !r.read(out.alloc_size)) return Decode::malformed;
     if ((out.file & kFileDataLength) && !r.read(out.data_length)) return Decode::malformed;
+    if ((out.ext & kExtPrivateSize) && !r.read(out.private_size)) return Decode::malformed;
+    if ((out.ext & kExtCloneId) && !r.read(out.clone_id)) return Decode::malformed;
+    if ((out.ext & kExtFlags) && !r.read(out.ext_flags)) return Decode::malformed;
 
     // A name is joined into paths, so anything that could step outside the folder is refused.
     if (out.name.empty() || out.name == "." || out.name == ".." || out.name.find('/') != std::string_view::npos)

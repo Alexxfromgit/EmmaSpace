@@ -76,6 +76,10 @@ typedef enum es_scan_phase {
                                    on a folder the walker did not descend, to avoid a network fetch */
 #define ES_NODE_HAS_LINKS 0x40u /* file whose size is counted here but that has other hard links;
                                    deleting this name may not free the space */
+#define ES_NODE_CLONE     0x80u /* file that shares disk blocks with other files (APFS clone, macOS);
+                                   deleting it may free less than its size on disk. Of several pure
+                                   clones, the first one found holds the shared blocks and the others'
+                                   `allocated` counts only what they own alone */
 
 typedef struct es_scan_options {
     uint32_t struct_size;     /* sizeof(es_scan_options) */

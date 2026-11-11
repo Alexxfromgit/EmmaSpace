@@ -22,7 +22,7 @@ public sealed partial class DuplicateGroupViewModel : ObservableObject
     public ulong FileSize { get; }
     public string Name { get; }
     public ObservableCollection<NodeItemViewModel> Files { get; } = [];
-    public ulong Wasted => Files.Count > 1 ? FileSize * (ulong)(Files.Count - 1) : 0;
+    public ulong Wasted => DuplicateGroup.Reclaimable(FileSize, Files.Count, Files.Count(f => f.IsClone));
     public string SizeText => ByteSize.Format(FileSize);
     public string CountText => Files.Count.ToString(CultureInfo.CurrentCulture) + " copies";
     public string WastedText => ByteSize.Format(Wasted);

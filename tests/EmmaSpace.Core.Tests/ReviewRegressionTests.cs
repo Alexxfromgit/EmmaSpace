@@ -55,6 +55,29 @@ public class ReviewRegressionTests
     }
 
     [Fact]
+    public void Removing_a_cloned_file_marks_sizes_approximate()
+    {
+        var b = new TreeBuilder();
+        b.AddRoot("/Root");
+        b.AddChild(0, "original.mov", NodeFlags.Clone, 5000);
+        b.AddChild(0, "copy.mov", NodeFlags.Clone, 5000);
+        using var tree = b.Build(Info());
+        tree.Remove(TreeFixtures.Find(tree, "copy.mov"));
+        Assert.True(tree.SizesApproximate); // the clone's blocks may still be held by original.mov
+    }
+
+    [Theory]
+    [InlineData(3, 0, 2)] // three plain copies: keep one, two can go
+    [InlineData(3, 3, 0)] // three clones of one file share their blocks: deleting any frees nothing
+    [InlineData(3, 2, 1)] // two clones and a real copy: keep a clone, the copy can go
+    [InlineData(2, 1, 1)] // a clone and a real copy
+    [InlineData(1, 0, 0)] // no duplicate left
+    public void Duplicate_clones_free_nothing(int count, int sharing, int freedCopies)
+    {
+        Assert.Equal(1000UL * (ulong)freedCopies, DuplicateGroup.Reclaimable(1000, count, sharing));
+    }
+
+    [Fact]
     public void FindByPath_requires_a_folder_boundary_after_the_root()
     {
         var b = new TreeBuilder();

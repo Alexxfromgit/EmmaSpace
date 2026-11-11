@@ -212,7 +212,7 @@
                         <TextBlock Text="{Binding MoreLabel}" Classes="muted" Margin="{Binding Indent}" Padding="22,0,0,0"
                                    VerticalAlignment="Center" FontStyle="Italic" IsVisible="{Binding IsMore}" />
                         <!-- A Grid (not a StackPanel) so the name gets a bounded width and trims. -->
-                        <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto" Margin="{Binding Indent}" VerticalAlignment="Center"
+                        <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto" Margin="{Binding Indent}" VerticalAlignment="Center"
                               IsVisible="{Binding !IsMore}">
                           <Button Content="{Binding Expander}" Width="20" Height="20" Padding="0" Background="Transparent"
                                   BorderThickness="0" FontSize="12" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
@@ -227,6 +227,9 @@
                                      ToolTip.Tip="Link or junction (not followed)" VerticalAlignment="Center" />
                           <TextBlock Grid.Column="5" Text=" ☁" Classes="muted" IsVisible="{Binding IsCloud}"
                                      ToolTip.Tip="Cloud item: only the part stored on this PC is counted" VerticalAlignment="Center" />
+                          <TextBlock Grid.Column="6" Text=" ⧉" Classes="muted" IsVisible="{Binding IsClone}"
+                                     ToolTip.Tip="Clone: shares disk space with other copies, so deleting it may free less than its size on disk"
+                                     VerticalAlignment="Center" />
                         </Grid>
                       </Panel>
                     </DataTemplate>

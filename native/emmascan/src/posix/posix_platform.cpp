@@ -93,12 +93,19 @@ static_assert(bulk::kDirMountStatus == ATTR_DIR_MOUNTSTATUS && bulk::kFileLinkCo
               bulk::kFileAllocSize == ATTR_FILE_ALLOCSIZE && bulk::kFileDataLength == ATTR_FILE_DATALENGTH);
 static_assert(bulk::kTypeDirectory == VDIR && bulk::kMountPoint == DIR_MNTSTATUS_MNTPOINT &&
               bulk::kMountTrigger == DIR_MNTSTATUS_TRIGGER && bulk::kFlagFirmlink == SF_FIRMLINK);
+static_assert(bulk::kExtPrivateSize == ATTR_CMNEXT_PRIVATESIZE && bulk::kExtCloneId == ATTR_CMNEXT_CLONEID &&
+              bulk::kExtFlags == ATTR_CMNEXT_EXT_FLAGS && bulk::kMayShareBlocks == EF_MAY_SHARE_BLOCKS &&
+              bulk::kSharesAllBlocks == EF_SHARES_ALL_BLOCKS);
 static_assert(sizeof(attribute_set_t) == 5 * sizeof(uint32_t) && sizeof(attrreference_t) == 8 &&
               sizeof(dev_t) == sizeof(int32_t) && sizeof(fsobj_type_t) == sizeof(uint32_t) &&
               sizeof(struct timespec) == 16 && sizeof(off_t) == 8);
 
 // Each worker reads folders in batches of this many bytes (a few thousand entries).
 constexpr size_t kBulkBufferSize = 256 * 1024;
+
+// Cleared the first time the kernel refuses FSOPT_ATTR_CMN_EXTENDED (clone attributes), so later
+// folders are listed without asking for them.
+std::atomic<bool> g_bulk_extended{true};
 
 // EMMASCAN_NO_BULK=1 lists with readdir + fstatat instead, for comparisons and as a way out if a file
 // system ever reports something wrong through getattrlistbulk.
@@ -120,6 +127,14 @@ struct DevInoHash {
     size_t operator()(const DevIno& k) const {
         return std::hash<uint64_t>()(static_cast<uint64_t>(k.ino) * 1000003u ^ static_cast<uint64_t>(k.dev));
     }
+};
+
+// APFS clone attributes of a file, when the listing provided them (macOS).
+struct CloneInfo {
+    bool may_share = false; // shares some blocks with other files
+    bool pure = false;      // shares all of them with the other files of `id`
+    uint64_t id = 0;
+    uint64_t private_size = 0;
 };
 
 class Walker {
@@ -206,7 +221,7 @@ private:
     // values taken from getattrlistbulk). `never_descend` marks an autofs trigger, which must not be looked
     // into because that would mount it.
     void add_entry(const WorkItem& item, std::string_view name, const struct stat& st, bool never_descend,
-                   Scratch& s) {
+                   Scratch& s, const CloneInfo& clone = {}) {
         EntryInfo e = describe_entry(st);
         bool go_down = false;
         if (S_ISDIR(st.st_mode)) {
@@ -228,6 +243,13 @@ private:
                     e.flags |= ES_NODE_HARDLINK;
                     e.size = e.allocated = 0;
                 }
+            }
+            // APFS clones keep their own logical size, but pure clones of one file share every block: the
+            // first one seen holds them, the others count only what they own alone (usually nothing).
+            if (S_ISREG(st.st_mode) && clone.may_share && !(e.flags & ES_NODE_HARDLINK)) {
+                e.flags |= ES_NODE_CLONE;
+                if (clone.pure && !first_clone({st.st_dev, static_cast<ino_t>(clone.id)}))
+                    e.allocated = std::min(e.allocated, clone.private_size);
             }
             s.bytes += e.size;
             ++s.files;
@@ -271,9 +293,16 @@ private:
 
         bool first_batch = true;
         for (;;) {
-            const int count = getattrlistbulk(fd, &request, s.bulk_buffer.data(), s.bulk_buffer.size(), 0);
+            const bool extended = g_bulk_extended.load(std::memory_order_relaxed);
+            request.forkattr = extended ? bulk::kExtRequested : 0;
+            const int count = getattrlistbulk(fd, &request, s.bulk_buffer.data(), s.bulk_buffer.size(),
+                                              extended ? FSOPT_ATTR_CMN_EXTENDED : 0);
             if (count < 0) {
                 if (errno == EINTR) continue;
+                if (errno == EINVAL && extended && first_batch) { // a kernel without the clone attributes
+                    g_bulk_extended = false;
+                    continue;
+                }
                 if (!first_batch) return Bulk::listed; // keep what was read, as readdir does when it stops early
                 return errno == ENOTSUP || errno == EINVAL ? Bulk::unsupported : Bulk::failed;
             }
@@ -319,7 +348,14 @@ private:
             st.st_atimespec = {static_cast<time_t>(r.atime.sec), static_cast<long>(r.atime.nsec)};
             if (trigger) st.st_mode = (st.st_mode & 07777) | S_IFDIR; // even if the record left the mode out
         }
-        add_entry(item, name, st, trigger, s);
+        CloneInfo clone;
+        if (!ask_stat && r.may_share_blocks()) {
+            clone.may_share = true;
+            clone.pure = r.is_pure_clone();
+            clone.id = r.clone_id;
+            clone.private_size = (r.ext & bulk::kExtPrivateSize) ? static_cast<uint64_t>(std::max<int64_t>(r.private_size, 0)) : 0;
+        }
+        add_entry(item, name, st, trigger, s, clone);
     }
 #endif
 
@@ -383,6 +419,11 @@ private:
         return seen_.insert(id).second;
     }
 
+    bool first_clone(DevIno family) {
+        std::lock_guard lock(seen_mutex_);
+        return clone_families_.insert(family).second;
+    }
+
     void fail(uint32_t node) {
         scan_.errors.fetch_add(1, std::memory_order_relaxed);
         std::lock_guard lock(store_mutex_);
@@ -403,6 +444,7 @@ private:
     std::vector<WorkItem> stack_;
     size_t pending_ = 0;
     std::unordered_set<DevIno, DevInoHash> seen_; // directories and hard-linked files
+    std::unordered_set<DevIno, DevInoHash> clone_families_; // (device, clone id) of pure clones seen
     std::atomic<int> failure_{ES_OK};
 };
 

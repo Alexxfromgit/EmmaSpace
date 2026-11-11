@@ -47,7 +47,7 @@ right-click → Open the first time.
 
 | Area | What you get |
 |---|---|
-| Scan | Drives or any folder; progress with live counts; cancel any time; links/junctions are not followed |
+| Scan | Drives or any folder; progress with live counts; cancel any time; links/junctions are not followed; hard-linked files are counted once, and on macOS so are the shared blocks of APFS clones (marked ⧉), so "on disk" shows what is really used |
 | Fast scan | As administrator, whole NTFS drives are read straight from the master file table (a system drive with 5.8 M entries in ~8 s instead of about a minute; see [Performance](#performance)). On Linux, whole ext2/3/4 file systems are read straight from their inode tables through a small helper that runs as root (pkexec asks for your password; the app itself keeps running as you). macOS has no such shortcut (APFS volumes are encrypted at the block level), so there every scan lists folders in batches with `getattrlistbulk` and the button is not shown |
 | Cloud files | OneDrive and other cloud placeholders count only what is stored on this PC (marked ☁); unpopulated cloud folders are not listed, so scanning never triggers downloads |
 | Folder tree | Size, share of parent, size on disk, file count; huge folders page in 500 items at a time |
@@ -68,7 +68,7 @@ EmmaSpace.App   Avalonia views, view models, TreemapControl
 EmmaSpace.Core  FileTree (flat arrays) · analyzers · snapshots · export · scanners
       │  LibraryImport, zero-copy spans over native memory
 emmascan.dll    C++20: MFT reader (raw volume) · parallel walker (GetFileInformationByHandleEx) · Recycle Bin (IFileOperation)
-libemmascan     macOS/Linux: parallel walker (macOS: getattrlistbulk, Linux: openat/fstatat; firmlink and hard-link de-duplication, online-only iCloud items never downloaded, autofs triggers never entered) · Trash (NSFileManager)
+libemmascan     macOS/Linux: parallel walker (macOS: getattrlistbulk, Linux: openat/fstatat; firmlink, hard-link and APFS clone de-duplication, online-only iCloud items never downloaded, autofs triggers never entered) · Trash (NSFileManager)
                 Linux: ext4 reader (inode tables and directory blocks from the block device)
 emmascan-helper Linux: runs one scan as root for the app (started through pkexec), result over a pipe
 ```
@@ -127,12 +127,14 @@ On macOS (Apple M2, 16 GB, macOS 15.6, APFS with FileVault, warm cache, default 
 
 | Listing | Data volume (7.7 M entries) | `/Applications` (1.1 M) | Home folder (3.3 M) |
 |---|---|---|---|
-| `getattrlistbulk` (used) | ~42 s | ~3.5 s | ~25 s |
+| `getattrlistbulk` (used) | ~44 s | ~3.9 s | ~25 s |
 | `readdir` + `fstatat` (before) | ~50 s | ~5.0 s | ~27 s |
 | `searchfs` catalog search (not used) | ~89 s for 5.8 M | | |
 
 APFS itself sets the pace: even listing names alone costs about as much as listing every attribute,
-and more threads mostly add contention in the kernel. Both walkers give the same tree for `/usr`,
+and more threads mostly add contention in the kernel. Asking for the clone attributes costs ~10%;
+APFS's private size of each file would cost ~70% more, so it is not read (pure clones own nothing
+alone, and partly changed clones keep their full size, since APFS does not say who holds the rest). Both walkers give the same tree for `/usr`,
 `/Applications` and `/`, except that `getattrlistbulk` also lists the few dozen entries that
 `stat` refuses (sandboxed caches). `searchfs` reads a whole volume in one stream that cannot be split
 across threads, so it ends up twice as slow as the walker and is not used.
@@ -215,7 +217,7 @@ branding/             icon source art (make-icon.ps1 and make-icns.py build the 
 
 ## Roadmap
 
-1. **macOS**: Full Disk Access guidance, clone-aware sizes on APFS, and a signed, notarized `.app`
+1. **macOS**: Full Disk Access guidance and a signed, notarized `.app`
    via `vpk pack` on macOS. The engine now runs and is tested on a Mac (Apple silicon), including
    Trash and the firmlink handling; Intel Macs are so far only built by CI.
 2. **Code signing**: sign the Windows installer and sign and notarize the macOS app; the release
