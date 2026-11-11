@@ -207,7 +207,7 @@ public class HelperScannerTests
         Assert.Same(scan, finished); // it did not hang
         if (scan.IsCompletedSuccessfully)
         {
-            scan.Result.Dispose(); // a very fast machine finished before the cancel
+            (await scan).Dispose(); // a very fast machine finished before the cancel
             return;
         }
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => scan);

@@ -1,20 +1,52 @@
 using Avalonia;
 using Avalonia.Styling;
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 using EmmaSpace.App.Services;
 using EmmaSpace.Core.Platform;
 
 namespace EmmaSpace.App.ViewModels;
 
-/// <summary>The Settings window: the colour theme and automatic update checks.</summary>
-public sealed class SettingsViewModel : ObservableObject
+/// <summary>The Settings window: the colour theme, automatic update checks and the duplicate search's memory.</summary>
+public sealed partial class SettingsViewModel : ObservableObject
 {
     private readonly SettingsService _settings;
+    private readonly HashCacheService _hashCache;
 
-    public SettingsViewModel(SettingsService settings, UpdateViewModel updates)
+    public SettingsViewModel(SettingsService settings, UpdateViewModel updates, HashCacheService hashCache)
     {
         _settings = settings;
+        _hashCache = hashCache;
         Updates = updates;
+    }
+
+    /// <summary>"Remember file fingerprints": duplicate searches skip files unchanged since an earlier one.</summary>
+    public bool RememberFileHashes
+    {
+        get => _hashCache.Enabled;
+        set
+        {
+            if (_hashCache.Enabled == value) return;
+            _hashCache.Enabled = value;
+            OnPropertyChanged();
+        }
+    }
+
+    [ObservableProperty]
+    public partial string? HashCacheStatus { get; private set; }
+
+    // Kept in step with what FileHashCache and DuplicateFinder.ReadPlan actually do.
+    public static string RememberHashesHint { get; } =
+        "Searching again then skips files of 1 MB and up that have not changed since, as the system reports it" +
+        (OperatingSystem.IsWindows() ? " (on drives that keep a change journal, such as the system drive)" : "") +
+        ". Smaller files, files changed in the last minute and files on network drives are always read. " +
+        $"Moving a copy to the {FileActions.TrashName} from the Duplicates tab first compares it byte by byte with another copy.";
+
+    [RelayCommand]
+    private async Task ClearHashCacheAsync()
+    {
+        await _hashCache.ClearAsync();
+        HashCacheStatus = "Forgotten. The next search reads every file again.";
     }
 
     /// <summary>"Check automatically", "Check now" and their results, shared with the version menu.</summary>
