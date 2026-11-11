@@ -634,7 +634,10 @@ TEST_CASE("ext4: as root a loop-mounted image scanned in ext4 mode equals the wa
         SKIP("cannot loop-mount");
     struct Unmount {
         fs::path p;
-        ~Unmount() { std::system(("umount " + quote(p) + " >/dev/null 2>&1").c_str()); }
+        ~Unmount() {
+            // Best effort: a failed unmount must not throw from a destructor; the temp dir cleanup reports it.
+            [[maybe_unused]] const int status = std::system(("umount " + quote(p) + " >/dev/null 2>&1").c_str());
+        }
     } unmount{mnt};
     // Where / is a shared mount (systemd's default, e.g. on CI runners) the loop mount is shared too, and so is
     // the bind mount made from it below: the tmpfs on empty/deep would then also be mounted on docs/deep. Keep
