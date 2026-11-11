@@ -635,7 +635,8 @@ TEST_CASE("ext4: as root a loop-mounted image scanned in ext4 mode equals the wa
     struct Unmount {
         fs::path p;
         ~Unmount() {
-            // Best effort: a failed unmount must not throw from a destructor; the temp dir cleanup reports it.
+            // Best effort, and silent if it fails: a destructor must not throw, and the temp dir cleanup that
+            // follows ignores errors too, so a mount left behind stays until it is unmounted by hand.
             [[maybe_unused]] const int status = std::system(("umount " + quote(p) + " >/dev/null 2>&1").c_str());
         }
     } unmount{mnt};
