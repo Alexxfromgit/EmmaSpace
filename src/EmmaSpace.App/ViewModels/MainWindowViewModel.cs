@@ -35,6 +35,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
     private Task _snapshotLoad = Task.CompletedTask; // the latest snapshot load, which the next offer waits for
     private bool _snapshotHandedOver; // a snapshot came from outside already, so later ones are asked about
     private bool _syncingSelection;
+    private bool _privacyHintDismissed; // for this session
 
     public MainWindowViewModel(IScanner scanner, IFileActions fileActions, IDialogService dialogs, SettingsService settings,
         ElevationService elevation, UpdateViewModel updates, HashCacheService hashCache)
@@ -210,6 +211,40 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
 
     [ObservableProperty]
     public partial string? SnapshotBanner { get; private set; }
+
+    /// <summary>macOS: the scan missed private folders because Emma Space has no Full Disk Access.</summary>
+    [ObservableProperty]
+    public partial bool ShowPrivacyHint { get; private set; }
+
+    public static string PrivacyHintText { get; } =
+        "Some folders could not be read. macOS keeps Mail, Messages, Safari and other apps' data private unless Emma Space " +
+        "has Full Disk Access. To include them, add Emma Space under Full Disk Access in System Settings (with + if it " +
+        "isn't listed), turn it on, then quit and reopen Emma Space and scan again.";
+
+    [RelayCommand]
+    private async Task OpenPrivacySettingsAsync()
+    {
+        try
+        {
+            await Task.Run(MacPrivacy.OpenFullDiskAccessSettings);
+        }
+        catch (IOException ex)
+        {
+            await _dialogs.ShowErrorAsync("Full Disk Access", ex.Message);
+        }
+    }
+
+    [RelayCommand]
+    private void DismissPrivacyHint()
+    {
+        _privacyHintDismissed = true;
+        ShowPrivacyHint = false;
+    }
+
+    private static bool NeedsPrivacyHint(FileTree? tree) =>
+        OperatingSystem.IsMacOS() && tree is { Info.Source: not ScanSource.Snapshot, Info.Errors: > 0 } &&
+        MacPrivacy.MayCoverProtectedData(tree.Info.RootPath, Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)) &&
+        MacPrivacy.HasFullDiskAccess() == false;
 
     [RelayCommand]
     private void RefreshDrives()
@@ -445,6 +480,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
         SnapshotBanner = tree?.Info.Source == ScanSource.Snapshot
             ? $"Viewing a snapshot taken {tree.Info.ScannedAt.ToString("g", CultureInfo.CurrentCulture)}. Rescan to see the current state."
             : null;
+        ShowPrivacyHint = !_privacyHintDismissed && NeedsPrivacyHint(tree);
         TreeRevision++;
 
         // Background work holds leases, so the native memory is only freed once it finishes.

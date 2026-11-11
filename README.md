@@ -43,6 +43,14 @@ status bar).
 signed, Windows SmartScreen asks you to confirm ("More info" → "Run anyway") and macOS needs
 right-click → Open the first time.
 
+On macOS, Mail, Messages, Safari and other apps' data stay private unless an app has **Full Disk
+Access**; without it they count as folders that could not be read. After a scan of the disk or your
+home folder that ran into them, Emma Space offers to open System Settings → Privacy & Security → Full
+Disk Access. Add Emma Space with **+** if it isn't listed, turn it on, then quit and reopen Emma Space
+(macOS applies the setting at the next start) and scan again. The setting belongs to the app's
+signature, so until releases are signed it may stop applying after an update; turn it off and on again
+then. Run from a terminal (`dotnet run`), the terminal's setting applies.
+
 ## Features
 
 | Area | What you get |
@@ -218,11 +226,10 @@ branding/             icon source art (make-icon.ps1 and make-icns.py build the 
 
 ## Roadmap
 
-1. **macOS**: Full Disk Access guidance and a signed, notarized `.app`
-   via `vpk pack` on macOS. The engine now runs and is tested on a Mac (Apple silicon), including
-   Trash and the firmlink handling; Intel Macs are so far only built by CI.
-2. **Code signing**: sign the Windows installer and sign and notarize the macOS app; the release
-   workflow is ready for both.
+1. **macOS on Intel**: the engine runs and is tested on Apple silicon, including Trash and the firmlink
+   handling; Intel Macs are so far only built by CI.
+2. **Code signing**: sign the Windows installer and sign and notarize the macOS app (`vpk pack` on
+   macOS); the release workflow is ready for both.
 3. MFT: handle a `$MFT` whose runlist spans extension records (currently falls back to the walker),
    overlap reads with parsing.
 4. Multi-select delete, hard-link de-duplication in the Windows walker, treemap search and highlighting.
