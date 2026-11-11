@@ -25,6 +25,11 @@ public enum NodeFlags : ushort
     /// found. It keeps no copy of the data of its own.
     /// </summary>
     CloneShared = 0x100,
+    /// <summary>
+    /// The first pure clone of a family found, which counts the data its <see cref="CloneShared"/> clones share. A
+    /// <see cref="Clone"/> with neither bit was changed since it was cloned (or its share is unknown) and holds its own copy.
+    /// </summary>
+    CloneHolder = 0x200,
 }
 
 /// <summary>Mirror of <c>es_node</c> in emmascan.h. Must stay exactly 64 bytes.</summary>

@@ -30,7 +30,8 @@ public sealed record DuplicateGroup(ulong FileSize, IReadOnlyList<int> Nodes, in
     /// <param name="removedCloneHolders">
     /// First clones of a family that were removed from the tree since the scan. Their family's other clones still hold
     /// the data, so up to that many of the remaining shared clones are counted again. Which family a clone belongs to
-    /// is not known, so this is exact for one family per group and an estimate beyond it.
+    /// is not known, so this is exact for one family per group and an estimate beyond it. Clones changed since they were
+    /// cloned are not holders in this sense: they keep their own copy and are counted like plain files.
     /// </param>
     public static int CountHolders(FileTree tree, IEnumerable<int> nodes, int removedCloneHolders = 0)
     {
@@ -44,8 +45,7 @@ public sealed record DuplicateGroup(ulong FileSize, IReadOnlyList<int> Nodes, in
     }
 
     /// <summary>The first clone of a family, which holds the data its <see cref="NodeFlags.CloneShared"/> clones share.</summary>
-    public static bool IsCloneHolder(NodeFlags flags) =>
-        (flags & (NodeFlags.Clone | NodeFlags.CloneShared)) == NodeFlags.Clone;
+    public static bool IsCloneHolder(NodeFlags flags) => (flags & NodeFlags.CloneHolder) != 0;
 }
 
 public readonly record struct DuplicateProgress(string Stage, long Done, long Total);

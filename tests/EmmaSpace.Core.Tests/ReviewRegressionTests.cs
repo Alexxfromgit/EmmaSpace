@@ -66,18 +66,20 @@ public class ReviewRegressionTests
         Assert.True(tree.SizesApproximate); // the clone's blocks may still be held by original.mov
     }
 
-    // Each member of a group of 1000-byte files: 'p' a plain file, 'c' an APFS clone that holds its data (the first of
-    // its family, or one changed since), 's' a clone whose data is counted on another; then what it holds on disk.
+    // Each member of a group of 1000-byte files: 'p' a plain file, 'h' the first pure clone of its family, which holds
+    // the data, 's' a clone whose data is counted on another, 'c' a clone changed since (it holds its own copy); then
+    // what it holds on disk.
     [Theory]
     [InlineData("p1000 p1000 p1000", 2000)]                   // keep one, two can go
-    [InlineData("c1000 s0 s0", 0)]                             // one clone family: the blocks are held once
-    [InlineData("c1000 s0 c1000 s0 p1000", 2000)]              // two families and a plain copy: three copies held
-    [InlineData("c1000 s0 c1000 s0", 1000)]                    // two families: deleting one frees its blocks
-    [InlineData("c1000 s300", 0)]                              // the second clone only owns a resource fork
-    [InlineData("c1000 s5000", 0)]                             // even when that fork outweighs the data
-    [InlineData("c6000 c1000 s0", 1000)]                       // two families, one holder with a large fork
-    [InlineData("c1000 p1000", 1000)]                          // a clone and a real copy
-    [InlineData("c1000 c1000", 1000)]                          // a clone changed since holds its own copy
+    [InlineData("h1000 s0 s0", 0)]                             // one clone family: the blocks are held once
+    [InlineData("h1000 s0 h1000 s0 p1000", 2000)]              // two families and a plain copy: three copies held
+    [InlineData("h1000 s0 h1000 s0", 1000)]                    // two families: deleting one frees its blocks
+    [InlineData("h1000 s300", 0)]                              // the second clone only owns a resource fork
+    [InlineData("h1000 s5000", 0)]                             // even when that fork outweighs the data
+    [InlineData("h6000 h1000 s0", 1000)]                       // two families, one holder with a large fork
+    [InlineData("h1000 p1000", 1000)]                          // a clone and a real copy
+    [InlineData("c1000 c1000", 1000)]                          // clones changed since hold their own copies
+    [InlineData("h1000 s0 c1000", 1000)]                       // a family and a changed clone
     [InlineData("p400 p400", 1000)]                            // compressed plain copies still count in full
     [InlineData("p1000", 0)]
     public void Duplicate_clones_count_once_per_copy_on_disk(string members, ulong reclaimable)
@@ -89,13 +91,22 @@ public class ReviewRegressionTests
     [Fact]
     public void A_removed_clone_holder_leaves_its_family_holding_the_data()
     {
-        using var tree = CloneGroup("c1000 s0 p1000", out var nodes);
+        using var tree = CloneGroup("h1000 s0 p1000", out var nodes);
         Assert.True(DuplicateGroup.IsCloneHolder(tree.Nodes[nodes[0]].Flags));
         tree.Remove(nodes[0]);
         var left = nodes.Skip(1).ToList();
         // The other clone still holds the blocks, so deleting the plain copy would still free 1000 bytes.
         Assert.Equal(2, DuplicateGroup.CountHolders(tree, left, removedCloneHolders: 1));
         Assert.Equal(1, DuplicateGroup.CountHolders(tree, left));
+    }
+
+    [Fact]
+    public void A_removed_changed_clone_is_not_taken_for_a_family_holder()
+    {
+        using var tree = CloneGroup("c1000 h1000 s0", out var nodes);
+        Assert.False(DuplicateGroup.IsCloneHolder(tree.Nodes[nodes[0]].Flags)); // so the group doesn't count it as one
+        tree.Remove(nodes[0]);
+        Assert.Equal(1, DuplicateGroup.CountHolders(tree, nodes.Skip(1)));      // the family alone: nothing to free
     }
 
     private static FileTree CloneGroup(string members, out List<int> nodes)
@@ -107,6 +118,7 @@ public class ReviewRegressionTests
         {
             var flags = m[0] switch
             {
+                'h' => NodeFlags.Clone | NodeFlags.CloneHolder,
                 'c' => NodeFlags.Clone,
                 's' => NodeFlags.Clone | NodeFlags.CloneShared,
                 _ => NodeFlags.None,

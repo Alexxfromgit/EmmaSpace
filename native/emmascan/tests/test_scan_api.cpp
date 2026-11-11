@@ -303,13 +303,14 @@ TEST_CASE("APFS clones count their shared blocks once") {
     int unshared = 0;
     for (const char* name : {"original.bin", "clone.bin", "sub/clone2.bin", "sub/forked.bin"}) {
         const es_node& n = result.nodes[nodes.at(name)];
+        CHECK(((n.flags & ES_NODE_CLONE_SHARED) != 0) != ((n.flags & ES_NODE_CLONE_HOLDER) != 0)); // one or the other
         if ((n.flags & ES_NODE_CLONE_SHARED) == 0) {
             ++unshared;
             CHECK(n.allocated >= four_mib);
         }
     }
     CHECK(unshared == 1);
-    CHECK((copy.flags & ES_NODE_CLONE_SHARED) == 0);
+    CHECK((copy.flags & (ES_NODE_CLONE_SHARED | ES_NODE_CLONE_HOLDER)) == 0);
     // 20 MiB of files; on disk the clones' data once, the fork and the copy.
     CHECK(result.nodes[0].size >= 5 * four_mib);
     CHECK(result.nodes[0].allocated >= 2 * four_mib + fork.size());
