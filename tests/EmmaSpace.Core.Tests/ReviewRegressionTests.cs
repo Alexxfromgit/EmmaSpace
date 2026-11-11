@@ -66,15 +66,27 @@ public class ReviewRegressionTests
         Assert.True(tree.SizesApproximate); // the clone's blocks may still be held by original.mov
     }
 
+    // Each member: 'p' a plain file, 'c' an APFS clone; then what it holds on disk, for a 1000-byte file.
     [Theory]
-    [InlineData(3, 0, 2)] // three plain copies: keep one, two can go
-    [InlineData(3, 3, 0)] // three clones of one file share their blocks: deleting any frees nothing
-    [InlineData(3, 2, 1)] // two clones and a real copy: keep a clone, the copy can go
-    [InlineData(2, 1, 1)] // a clone and a real copy
-    [InlineData(1, 0, 0)] // no duplicate left
-    public void Duplicate_clones_free_nothing(int count, int sharing, int freedCopies)
+    [InlineData("p1000 p1000 p1000", 2000)]                   // keep one, two can go
+    [InlineData("c1000 c0 c0", 0)]                             // one clone family: the blocks are held once
+    [InlineData("c1000 c0 c1000 c0 p1000", 2000)]              // two families and a plain copy: three copies held
+    [InlineData("c1000 c0 c1000 c0", 1000)]                    // two families: deleting one frees its blocks
+    [InlineData("c1000 c300", 0)]                              // the second clone only owns a resource fork
+    [InlineData("c1000 p1000", 1000)]                          // a clone and a real copy
+    [InlineData("c1000 c1000", 1000)]                          // a clone changed since holds its own copy
+    [InlineData("p400 p400", 1000)]                            // compressed plain copies still count in full
+    [InlineData("p1000", 0)]
+    public void Duplicate_clones_count_once_per_copy_on_disk(string members, ulong reclaimable)
     {
-        Assert.Equal(1000UL * (ulong)freedCopies, DuplicateGroup.Reclaimable(1000, count, sharing));
+        var b = new TreeBuilder();
+        b.AddRoot("/Root");
+        var i = 0;
+        foreach (var m in members.Split(' '))
+            b.AddChild(0, $"f{i++}.bin", m[0] == 'c' ? NodeFlags.Clone : NodeFlags.None, 1000, ulong.Parse(m[1..]));
+        using var tree = b.Build(Info());
+        var nodes = Enumerable.Range(1, i).ToList();
+        Assert.Equal(reclaimable, new DuplicateGroup(1000, nodes, DuplicateGroup.CountHolders(tree, nodes)).WastedBytes);
     }
 
     [Fact]

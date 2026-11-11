@@ -31,6 +31,7 @@ inline constexpr uint32_t kDirMountStatus = 0x00000004u;
 inline constexpr uint32_t kFileLinkCount = 0x00000001u;
 inline constexpr uint32_t kFileAllocSize = 0x00000004u;
 inline constexpr uint32_t kFileDataLength = 0x00000200u;
+inline constexpr uint32_t kFileDataAllocSize = 0x00000400u; // the data fork alone (ALLOCSIZE covers every fork)
 // ATTR_CMNEXT_*: extended common attributes, passed in the fork bitmap with FSOPT_ATTR_CMN_EXTENDED.
 inline constexpr uint32_t kExtPrivateSize = 0x00000008u; // bytes not shared with any other file (decoded, not requested)
 inline constexpr uint32_t kExtCloneId = 0x00000100u;     // the same for every pure clone of a file
@@ -44,7 +45,7 @@ inline constexpr uint64_t kSharesAllBlocks = 0x00000040u; // EF_SHARES_ALL_BLOCK
 inline constexpr uint32_t kCommonRequested = kCmnReturnedAttrs | kCmnName | kCmnDevId | kCmnObjType | kCmnModTime |
                                              kCmnAccTime | kCmnAccessMask | kCmnFlags | kCmnFileId | kCmnError;
 inline constexpr uint32_t kDirRequested = kDirMountStatus;
-inline constexpr uint32_t kFileRequested = kFileLinkCount | kFileAllocSize | kFileDataLength;
+inline constexpr uint32_t kFileRequested = kFileLinkCount | kFileAllocSize | kFileDataLength | kFileDataAllocSize;
 // Not the private size: APFS works it out from the extents, which made listing ~70% slower. A pure clone
 // shares every block, so it owns nothing alone anyway.
 inline constexpr uint32_t kExtRequested = kExtCloneId | kExtFlags;
@@ -61,6 +62,15 @@ inline constexpr uint32_t kMountTrigger = 0x2u; // DIR_MNTSTATUS_TRIGGER (autofs
 
 // st_flags bit of a firmlink (<sys/stat.h>): the record describes the link, not the folder it leads to.
 inline constexpr uint32_t kFlagFirmlink = 0x00800000u; // SF_FIRMLINK
+// st_flags bit of a data vault, a folder macOS protects even from root; stat() on it fails with EPERM.
+inline constexpr uint32_t kFlagDataVault = 0x00000080u; // UF_DATAVAULT
+
+// st_mode type bits for each fsobj_type_t (VNON, VREG, VDIR, VBLK, VCHR, VLNK, VSOCK, VFIFO). getattrlist(2)
+// promises only the permission bits of ATTR_CMN_ACCESSMASK, so the type comes from ATTR_CMN_OBJTYPE.
+inline constexpr uint32_t kModeTypes[] = {0, 0100000, 0040000, 0060000, 0020000, 0120000, 0140000, 0010000};
+constexpr uint32_t mode_type_of(uint32_t obj_type) {
+    return obj_type < sizeof(kModeTypes) / sizeof(kModeTypes[0]) ? kModeTypes[obj_type] : 0;
+}
 
 struct Time {
     int64_t sec = 0;
@@ -76,13 +86,14 @@ struct Record {
     int32_t dev = 0;
     uint32_t obj_type = 0;
     Time mtime, atime;
-    uint32_t mode = 0;     // same as st_mode, including the file type bits
+    uint32_t mode = 0;     // ATTR_CMN_ACCESSMASK: only its permission bits are reliable, see st_mode()
     uint32_t flags = 0;    // same as st_flags
     uint64_t file_id = 0;
     uint32_t mount_status = 0;
     uint32_t link_count = 0;
     int64_t alloc_size = 0;
     int64_t data_length = 0;
+    int64_t data_alloc_size = 0;
     uint32_t ext = 0;      // returned extended (ATTR_CMNEXT_*) bits
     int64_t private_size = 0;
     uint64_t clone_id = 0;
@@ -90,14 +101,18 @@ struct Record {
 
     bool is_directory() const { return obj_type == kTypeDirectory; }
 
+    // st_mode as stat() reports it: permission bits from the access mask, the type from the object type.
+    uint32_t st_mode() const { return (mode & 07777u) | mode_type_of(obj_type); }
+
     // A file that may share blocks with others (an APFS clone, or a clone that was changed since).
     bool may_share_blocks() const { return (ext & kExtFlags) && (ext_flags & kMayShareBlocks); }
     // Every block is shared with the other files of the same clone id, so none of them owns any alone.
     bool is_pure_clone() const { return may_share_blocks() && (ext_flags & kSharesAllBlocks) && (ext & kExtCloneId); }
 
-    // True when every attribute the walker needs was returned. If not, the caller falls back to fstatat().
+    // True when every attribute the walker needs was returned and the type is a known one. If not, the
+    // caller falls back to fstatat().
     bool complete() const {
-        if ((common & kCommonNeeded) != kCommonNeeded) return false;
+        if ((common & kCommonNeeded) != kCommonNeeded || mode_type_of(obj_type) == 0) return false;
         return is_directory() || (file & kFileNeeded) == kFileNeeded;
     }
 };
@@ -183,6 +198,7 @@ inline Decode decode_record(const char* data, size_t available, Record& out, uin
     if ((out.file & kFileLinkCount) && !r.read(out.link_count)) return Decode::malformed;
     if ((out.file & kFileAllocSize) && !r.read(out.alloc_size)) return Decode::malformed;
     if ((out.file & kFileDataLength) && !r.read(out.data_length)) return Decode::malformed;
+    if ((out.file & kFileDataAllocSize) && !r.read(out.data_alloc_size)) return Decode::malformed;
     if ((out.ext & kExtPrivateSize) && !r.read(out.private_size)) return Decode::malformed;
     if ((out.ext & kExtCloneId) && !r.read(out.clone_id)) return Decode::malformed;
     if ((out.ext & kExtFlags) && !r.read(out.ext_flags)) return Decode::malformed;

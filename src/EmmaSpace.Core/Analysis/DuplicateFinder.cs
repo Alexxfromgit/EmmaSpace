@@ -12,21 +12,33 @@ public sealed record DuplicateOptions
     public int MaxParallelism { get; init; } = Math.Clamp(Environment.ProcessorCount, 2, 8);
 }
 
-/// <param name="SharingCount">Members that share their blocks with other files (<see cref="NodeFlags.Clone"/>).</param>
-public sealed record DuplicateGroup(ulong FileSize, IReadOnlyList<int> Nodes, int SharingCount = 0)
+/// <param name="HolderCount">
+/// Members that keep a copy of the data on disk themselves (<see cref="CountHolders"/>); all of them when null.
+/// </param>
+public sealed record DuplicateGroup(ulong FileSize, IReadOnlyList<int> Nodes, int? HolderCount = null)
 {
-    public ulong WastedBytes => Reclaimable(FileSize, Nodes.Count, SharingCount);
+    public ulong WastedBytes => Reclaimable(FileSize, HolderCount ?? Nodes.Count);
+
+    /// <summary>What deleting all but one copy would free: every copy kept on disk, except the one that stays.</summary>
+    public static ulong Reclaimable(ulong fileSize, int holders) => fileSize * (ulong)Math.Max(holders - 1, 0);
 
     /// <summary>
-    /// What deleting all but one of <paramref name="count"/> identical files would free. A file that shares its blocks
-    /// with others (an APFS clone) frees nothing, because another file keeps them in use; when any member does, the
-    /// copy that stays can be one of those, so every other member counts.
+    /// How many of these identical files keep their own copy of the data on disk. Pure APFS clones of one file share
+    /// it: the engine counts it on the first one found and gives the others only what they own alone (a resource
+    /// fork, say), so a clone that holds less than half of what the fullest member holds is not counted. Every other
+    /// file is, including clones that were changed since and the first clone of each family.
     /// </summary>
-    public static ulong Reclaimable(ulong fileSize, int count, int sharing)
+    public static int CountHolders(FileTree tree, IEnumerable<int> nodes)
     {
-        if (count < 2) return 0;
-        var freeing = sharing > 0 ? count - sharing : count - 1;
-        return fileSize * (ulong)Math.Max(freeing, 0);
+        ulong fullest = 0;
+        var members = new List<(NodeFlags Flags, ulong Allocated)>();
+        foreach (var node in nodes)
+        {
+            ref readonly var n = ref tree.Nodes[node];
+            members.Add((n.Flags, n.Allocated));
+            fullest = Math.Max(fullest, n.Allocated);
+        }
+        return members.Count(m => (m.Flags & NodeFlags.Clone) == 0 || m.Allocated * 2 >= fullest);
     }
 }
 
@@ -69,7 +81,7 @@ public static class DuplicateFinder
             options, progress, ct);
 
         return complete.Concat(fullGroups)
-            .Select(g => new DuplicateGroup(tree.Nodes[g[0]].Size, g, g.Count(n => (tree.Nodes[n].Flags & NodeFlags.Clone) != 0)))
+            .Select(g => new DuplicateGroup(tree.Nodes[g[0]].Size, g, DuplicateGroup.CountHolders(tree, g)))
             .OrderByDescending(g => g.WastedBytes)
             .ToList();
     }

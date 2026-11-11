@@ -7,8 +7,8 @@
 // - Hard links: files with st_nlink > 1 are counted once (later links get ES_NODE_HARDLINK, size 0).
 // - Directories reached twice (macOS firmlinks such as /Users and /System/Volumes/Data/Users
 //   share the same device and inode) are listed once; later sightings are flagged as links.
-// - Symbolic links are recorded but never followed. On macOS, autofs triggers (e.g. /Network) are
-//   recorded but never looked into, because that would mount them.
+// - Symbolic links are recorded but never followed. With getattrlistbulk, autofs triggers (e.g. /Network)
+//   are recorded but never looked into, because that would mount them; readdir cannot tell them apart.
 // - Online-only iCloud / File Provider items ("dataless") count only their local bytes; such folders
 //   are not listed, and the worker threads refuse to materialize anything, so a scan never downloads.
 // - When scanning "/", pseudo file systems and other mounted volumes are skipped.
@@ -90,9 +90,15 @@ static_assert(bulk::kCmnName == ATTR_CMN_NAME && bulk::kCmnDevId == ATTR_CMN_DEV
               bulk::kCmnFlags == ATTR_CMN_FLAGS && bulk::kCmnFileId == ATTR_CMN_FILEID &&
               bulk::kCmnError == ATTR_CMN_ERROR && bulk::kCmnReturnedAttrs == ATTR_CMN_RETURNED_ATTRS);
 static_assert(bulk::kDirMountStatus == ATTR_DIR_MOUNTSTATUS && bulk::kFileLinkCount == ATTR_FILE_LINKCOUNT &&
-              bulk::kFileAllocSize == ATTR_FILE_ALLOCSIZE && bulk::kFileDataLength == ATTR_FILE_DATALENGTH);
+              bulk::kFileAllocSize == ATTR_FILE_ALLOCSIZE && bulk::kFileDataLength == ATTR_FILE_DATALENGTH &&
+              bulk::kFileDataAllocSize == ATTR_FILE_DATAALLOCSIZE);
 static_assert(bulk::kTypeDirectory == VDIR && bulk::kMountPoint == DIR_MNTSTATUS_MNTPOINT &&
-              bulk::kMountTrigger == DIR_MNTSTATUS_TRIGGER && bulk::kFlagFirmlink == SF_FIRMLINK);
+              bulk::kMountTrigger == DIR_MNTSTATUS_TRIGGER && bulk::kFlagFirmlink == SF_FIRMLINK &&
+              bulk::kFlagDataVault == UF_DATAVAULT);
+static_assert(bulk::mode_type_of(VREG) == S_IFREG && bulk::mode_type_of(VDIR) == S_IFDIR &&
+              bulk::mode_type_of(VBLK) == S_IFBLK && bulk::mode_type_of(VCHR) == S_IFCHR &&
+              bulk::mode_type_of(VLNK) == S_IFLNK && bulk::mode_type_of(VSOCK) == S_IFSOCK &&
+              bulk::mode_type_of(VFIFO) == S_IFIFO);
 static_assert(bulk::kExtPrivateSize == ATTR_CMNEXT_PRIVATESIZE && bulk::kExtCloneId == ATTR_CMNEXT_CLONEID &&
               bulk::kExtFlags == ATTR_CMNEXT_EXT_FLAGS && bulk::kMayShareBlocks == EF_MAY_SHARE_BLOCKS &&
               bulk::kSharesAllBlocks == EF_SHARES_ALL_BLOCKS);
@@ -102,10 +108,6 @@ static_assert(sizeof(attribute_set_t) == 5 * sizeof(uint32_t) && sizeof(attrrefe
 
 // Each worker reads folders in batches of this many bytes (a few thousand entries).
 constexpr size_t kBulkBufferSize = 256 * 1024;
-
-// Cleared the first time the kernel refuses FSOPT_ATTR_CMN_EXTENDED (clone attributes), so later
-// folders are listed without asking for them.
-std::atomic<bool> g_bulk_extended{true};
 
 // EMMASCAN_NO_BULK=1 lists with readdir + fstatat instead, for comparisons and as a way out if a file
 // system ever reports something wrong through getattrlistbulk.
@@ -132,9 +134,9 @@ struct DevInoHash {
 // APFS clone attributes of a file, when the listing provided them (macOS).
 struct CloneInfo {
     bool may_share = false; // shares some blocks with other files
-    bool pure = false;      // shares all of them with the other files of `id`
+    bool pure = false;      // shares all of their data with the other files of `id`
     uint64_t id = 0;
-    uint64_t private_size = 0;
+    uint64_t own_size = 0;  // what a pure clone stores alone: forks and extended attributes beyond the data
 };
 
 class Walker {
@@ -144,7 +146,7 @@ public:
     // Returns ES_OK, or the first failure of any worker (e.g. ES_ERR_NO_MEMORY).
     es_status run(uint32_t root_node, std::string root_path, DevIno root_id) {
         seen_.insert(root_id);
-        stack_.push_back({root_node, std::move(root_path)});
+        stack_.push_back({root_node, std::move(root_path), root_id.dev});
         pending_ = 1;
         unsigned threads = scan_.thread_count;
         if (threads == 0) threads = std::clamp(std::thread::hardware_concurrency(), 2u, 16u);
@@ -164,6 +166,7 @@ private:
     struct WorkItem {
         uint32_t node;
         std::string path;
+        dev_t dev; // the volume the folder is on
     };
 
     // Per-worker buffers, reused for every folder so listing does not allocate per entry.
@@ -172,6 +175,7 @@ private:
         std::vector<std::u16string> names;
         std::vector<std::string> raw_names;
         std::vector<bool> descend;
+        std::vector<dev_t> devs;
         uint64_t bytes = 0, files = 0, dirs = 0;
 #if defined(__APPLE__)
         std::vector<char> bulk_buffer;
@@ -181,6 +185,7 @@ private:
             names.clear();
             raw_names.clear();
             descend.clear();
+            devs.clear();
             bytes = files = dirs = 0;
         }
     };
@@ -249,7 +254,7 @@ private:
             if (S_ISREG(st.st_mode) && clone.may_share && !(e.flags & ES_NODE_HARDLINK)) {
                 e.flags |= ES_NODE_CLONE;
                 if (clone.pure && !first_clone({st.st_dev, static_cast<ino_t>(clone.id)}))
-                    e.allocated = std::min(e.allocated, clone.private_size);
+                    e.allocated = std::min(e.allocated, clone.own_size);
             }
             s.bytes += e.size;
             ++s.files;
@@ -258,6 +263,7 @@ private:
         s.names.push_back(utf8_to_utf16(name));
         s.entries.push_back(e);
         s.descend.push_back(go_down);
+        s.devs.push_back(st.st_dev);
     }
 
     // readdir + one fstatat per entry. Takes ownership of `fd`. False if the folder could not be opened.
@@ -279,7 +285,9 @@ private:
     }
 
 #if defined(__APPLE__)
-    enum class Bulk { listed, unsupported, failed };
+    // partial: some entries were read, then the listing broke off (an I/O error, or a batch that could not
+    // be decoded). What was read is kept and the folder is flagged as not fully read.
+    enum class Bulk { listed, partial, unsupported, failed };
 
     // getattrlistbulk: one call describes a whole batch of entries, instead of one fstatat() each.
     // Does not close `fd`.
@@ -293,18 +301,22 @@ private:
 
         bool first_batch = true;
         for (;;) {
-            const bool extended = g_bulk_extended.load(std::memory_order_relaxed);
+            const bool extended = extended_allowed(item.dev);
             request.forkattr = extended ? bulk::kExtRequested : 0;
             const int count = getattrlistbulk(fd, &request, s.bulk_buffer.data(), s.bulk_buffer.size(),
                                               extended ? FSOPT_ATTR_CMN_EXTENDED : 0);
             if (count < 0) {
                 if (errno == EINTR) continue;
-                if (errno == EINVAL && extended && first_batch) { // a kernel without the clone attributes
-                    g_bulk_extended = false;
+                if (errno == EINVAL && extended && first_batch) { // a file system without the clone attributes
+                    refuse_extended(item.dev);
                     continue;
                 }
-                if (!first_batch) return Bulk::listed; // keep what was read, as readdir does when it stops early
-                return errno == ENOTSUP || errno == EINVAL ? Bulk::unsupported : Bulk::failed;
+                // ERANGE means "the buffer holds not even one entry", which 256 KiB always does; nullfs (the
+                // wrappers of iOS apps on a Mac) returns it at the end of every listing instead of 0.
+                if (!first_batch) return errno == ERANGE ? Bulk::listed : Bulk::partial;
+                // A folder that may be listed but not searched (r without x) fails here with EACCES. readdir
+                // would show it empty, as every fstatat inside it fails; flagging it as unreadable is honest.
+                return errno == ENOTSUP || errno == EINVAL || errno == ERANGE ? Bulk::unsupported : Bulk::failed;
             }
             if (count == 0) return Bulk::listed;
             first_batch = false;
@@ -315,7 +327,7 @@ private:
                 bulk::Record r;
                 uint32_t length = 0;
                 const auto decoded = bulk::decode_record(p, static_cast<size_t>(end - p), r, length);
-                if (decoded == bulk::Decode::malformed) break; // nothing after this can be located
+                if (decoded == bulk::Decode::malformed) return Bulk::partial; // nothing after it can be located
                 p += length;
                 if (decoded == bulk::Decode::skip) continue;
                 add_bulk_entry(item, fd, r, s);
@@ -329,8 +341,9 @@ private:
         const bool trigger = r.is_directory() && (r.mount_status & bulk::kMountTrigger);
         // A firmlink or mount point is described as the link or the covered folder, not as what a path
         // through it reaches. fstatat() reports the latter, which the de-duplication relies on. An entry
-        // with an error or missing attributes gets the same treatment. Triggers are never looked up.
-        const bool ask_stat = r.error != 0 || !r.complete() ||
+        // with an error or missing attributes gets the same treatment, and so does a data vault: stat() is
+        // refused there, and such entries stay out of the tree as with readdir. Triggers are never looked up.
+        const bool ask_stat = r.error != 0 || !r.complete() || (r.flags & bulk::kFlagDataVault) ||
                               (r.is_directory() && !trigger &&
                                ((r.flags & bulk::kFlagFirmlink) || (r.mount_status & bulk::kMountPoint)));
         struct stat st{};
@@ -339,54 +352,68 @@ private:
         } else {
             st.st_dev = r.dev;
             st.st_ino = r.file_id;
-            st.st_mode = static_cast<mode_t>(r.mode);
+            st.st_mode = static_cast<mode_t>(r.st_mode());
             st.st_flags = r.flags;
             st.st_nlink = static_cast<nlink_t>(std::min<uint32_t>(r.link_count, std::numeric_limits<nlink_t>::max()));
             st.st_size = std::max<int64_t>(r.data_length, 0);
             st.st_blocks = static_cast<blkcnt_t>((std::max<int64_t>(r.alloc_size, 0) + 511) / 512);
             st.st_mtimespec = {static_cast<time_t>(r.mtime.sec), static_cast<long>(r.mtime.nsec)};
             st.st_atimespec = {static_cast<time_t>(r.atime.sec), static_cast<long>(r.atime.nsec)};
-            if (trigger) st.st_mode = (st.st_mode & 07777) | S_IFDIR; // even if the record left the mode out
         }
         CloneInfo clone;
         if (!ask_stat && r.may_share_blocks()) {
             clone.may_share = true;
             clone.pure = r.is_pure_clone();
             clone.id = r.clone_id;
-            clone.private_size = (r.ext & bulk::kExtPrivateSize) ? static_cast<uint64_t>(std::max<int64_t>(r.private_size, 0)) : 0;
+            // The clone id names the data stream; a resource fork or extended attributes are the file's own.
+            if (r.ext & bulk::kExtPrivateSize)
+                clone.own_size = static_cast<uint64_t>(std::max<int64_t>(r.private_size, 0));
+            else if (r.file & bulk::kFileDataAllocSize)
+                clone.own_size = static_cast<uint64_t>(std::max<int64_t>(r.alloc_size - r.data_alloc_size, 0));
         }
         add_entry(item, name, st, trigger, s, clone);
     }
 #endif
 
+    // Closes the folder's descriptor on every path out, including an exception, until list_readdir takes it.
+    struct FdGuard {
+        int fd;
+        ~FdGuard() {
+            if (fd >= 0) close(fd);
+        }
+        int release() { return std::exchange(fd, -1); }
+    };
+
     void list_directory(const WorkItem& item, Scratch& s) {
         s.clear();
-        const int fd = open(item.path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-        if (fd < 0) {
+        FdGuard fd{open(item.path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC)};
+        if (fd.fd < 0) {
             fail(item.node);
             return;
         }
-        bool listed = false;
+        bool listed = false, partial = false;
 #if defined(__APPLE__)
         if (bulk_enabled()) {
-            switch (list_bulk(item, fd, s)) {
+            switch (list_bulk(item, fd.fd, s)) {
             case Bulk::listed:
                 listed = true;
                 break;
+            case Bulk::partial:
+                listed = partial = true;
+                break;
             case Bulk::failed:
-                close(fd);
                 fail(item.node);
                 return;
             case Bulk::unsupported:
                 break;
             }
         }
-        if (listed) close(fd);
 #endif
-        if (!listed && !list_readdir(item, fd, s)) {
+        if (!listed && !list_readdir(item, fd.release(), s)) {
             fail(item.node);
             return;
         }
+        if (partial) fail(item.node); // what was read so far is still added below
 
         for (size_t i = 0; i < s.entries.size(); ++i) s.entries[i].name = s.names[i];
         uint32_t first;
@@ -402,7 +429,7 @@ private:
         std::lock_guard lock(queue_mutex_);
         for (size_t i = 0; i < s.entries.size(); ++i) {
             if (!s.descend[i]) continue;
-            stack_.push_back({first + static_cast<uint32_t>(i), join(item.path, s.raw_names[i])});
+            stack_.push_back({first + static_cast<uint32_t>(i), join(item.path, s.raw_names[i]), s.devs[i]});
             ++pending_;
         }
         queue_cv_.notify_all();
@@ -423,6 +450,23 @@ private:
         std::lock_guard lock(seen_mutex_);
         return clone_families_.insert(family).second;
     }
+
+#if defined(__APPLE__)
+    // Volumes whose file system refused FSOPT_ATTR_CMN_EXTENDED in this scan: their folders are listed
+    // without the clone attributes, while every other volume keeps them.
+    bool extended_allowed(dev_t dev) {
+        if (!any_refused_extended_.load(std::memory_order_acquire)) return true;
+        std::lock_guard lock(seen_mutex_);
+        return std::find(refused_extended_.begin(), refused_extended_.end(), dev) == refused_extended_.end();
+    }
+
+    void refuse_extended(dev_t dev) {
+        std::lock_guard lock(seen_mutex_);
+        if (std::find(refused_extended_.begin(), refused_extended_.end(), dev) == refused_extended_.end())
+            refused_extended_.push_back(dev);
+        any_refused_extended_.store(true, std::memory_order_release);
+    }
+#endif
 
     void fail(uint32_t node) {
         scan_.errors.fetch_add(1, std::memory_order_relaxed);
@@ -445,6 +489,10 @@ private:
     size_t pending_ = 0;
     std::unordered_set<DevIno, DevInoHash> seen_; // directories and hard-linked files
     std::unordered_set<DevIno, DevInoHash> clone_families_; // (device, clone id) of pure clones seen
+#if defined(__APPLE__)
+    std::vector<dev_t> refused_extended_; // guarded by seen_mutex_
+    std::atomic<bool> any_refused_extended_{false};
+#endif
     std::atomic<int> failure_{ES_OK};
 };
 
