@@ -21,6 +21,10 @@
 #  include <sys/stat.h>
 #  include <unistd.h>
 #endif
+#if defined(__APPLE__)
+#include <sys/clonefile.h>
+#include <sys/xattr.h>
+#endif
 
 namespace fs = std::filesystem;
 
@@ -358,6 +362,87 @@ TEST_CASE("POSIX scan matches lstat for every entry") {
     CHECK(hard_link_names_counted == 1); // top.bin and top-link.bin share one count
     CHECK(nodes.size() == expected);     // nothing extra either
     CHECK(result.nodes[0].file_count == expected - result.nodes[0].dir_count);
+    es_scan_free(scan);
+}
+#endif
+
+#if defined(__APPLE__)
+TEST_CASE("APFS clones count their shared blocks once") {
+    TempTree tree;
+    const fs::path& root = tree.root;
+    const auto original = root / "original.bin";
+    {
+        std::mt19937 rng(7);
+        std::string data(4 * 1024 * 1024, '\0');
+        for (auto& c : data) c = static_cast<char>(rng()); // not compressible, so it really takes 4 MiB
+        std::ofstream(original, std::ios::binary) << data;
+    }
+    fs::create_directories(root / "sub");
+    if (clonefile(original.c_str(), (root / "clone.bin").c_str(), 0) != 0) SKIP("no clonefile here (not APFS?)");
+    REQUIRE(clonefile(original.c_str(), (root / "sub" / "clone2.bin").c_str(), 0) == 0);
+    // Still a pure clone of the data, but with a resource fork of its own, which must stay counted.
+    const auto forked = root / "sub" / "forked.bin";
+    REQUIRE(clonefile(original.c_str(), forked.c_str(), 0) == 0);
+    const std::string fork(256 * 1024, 'r');
+    REQUIRE(setxattr(forked.c_str(), XATTR_RESOURCEFORK_NAME, fork.data(), fork.size(), 0, 0) == 0);
+    {
+        // By hand: fs::copy_file uses copyfile(), which clones on APFS.
+        std::ifstream in(original, std::ios::binary);
+        std::ofstream out(root / "copy.bin", std::ios::binary);
+        out << in.rdbuf();
+    }
+    sync();
+
+    const auto path = tree.path16();
+    es_scan_options options{};
+    options.struct_size = sizeof(options);
+    options.root_path = reinterpret_cast<const es_char*>(path.c_str());
+    es_scan* scan = nullptr;
+    REQUIRE(es_scan_start(&options, &scan) == ES_OK);
+    REQUIRE(es_scan_wait(scan, 60000) == ES_OK);
+    es_result result{};
+    REQUIRE(es_scan_get_result(scan, &result) == ES_OK);
+    const auto nodes = paths_of(result);
+    const uint64_t four_mib = 4 * 1024 * 1024;
+
+    int holders = 0, sharers = 0;
+    for (const char* name : {"original.bin", "clone.bin", "sub/clone2.bin"}) {
+        INFO(name);
+        const es_node& n = result.nodes[nodes.at(name)];
+        CHECK(n.size == four_mib);              // each clone is a whole file of its own
+        CHECK((n.flags & ES_NODE_CLONE) != 0);
+        if (n.allocated >= four_mib) ++holders;
+        if (n.allocated == 0) ++sharers;
+    }
+    // Whichever was found first holds the shared blocks (checked below, as it may be forked.bin).
+    const es_node& copy = result.nodes[nodes.at("copy.bin")];
+    CHECK((copy.flags & ES_NODE_CLONE) == 0);
+    CHECK(copy.allocated >= four_mib);
+    const es_node& f = result.nodes[nodes.at("sub/forked.bin")];
+    CHECK((f.flags & ES_NODE_CLONE) != 0);
+    if (f.allocated < four_mib) { // another clone holds the data: the fork is still its own
+        CHECK(f.allocated >= fork.size());
+        CHECK(holders == 1);
+    } else {                      // found first, so it holds the data as well as its fork
+        CHECK(holders == 0);
+        CHECK(sharers == 3);
+    }
+    // The flag names the one that holds the data, whatever the forks weigh.
+    int unshared = 0;
+    for (const char* name : {"original.bin", "clone.bin", "sub/clone2.bin", "sub/forked.bin"}) {
+        const es_node& n = result.nodes[nodes.at(name)];
+        CHECK(((n.flags & ES_NODE_CLONE_SHARED) != 0) != ((n.flags & ES_NODE_CLONE_HOLDER) != 0)); // one or the other
+        if ((n.flags & ES_NODE_CLONE_SHARED) == 0) {
+            ++unshared;
+            CHECK(n.allocated >= four_mib);
+        }
+    }
+    CHECK(unshared == 1);
+    CHECK((copy.flags & (ES_NODE_CLONE_SHARED | ES_NODE_CLONE_HOLDER)) == 0);
+    // 20 MiB of files; on disk the clones' data once, the fork and the copy.
+    CHECK(result.nodes[0].size >= 5 * four_mib);
+    CHECK(result.nodes[0].allocated >= 2 * four_mib + fork.size());
+    CHECK(result.nodes[0].allocated < 3 * four_mib);
     es_scan_free(scan);
 }
 #endif

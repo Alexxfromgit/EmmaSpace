@@ -33,6 +33,10 @@ struct RecordBuilder {
     uint32_t link_count = 1;
     int64_t alloc_size = 8192;
     int64_t data_length = 5000;
+    int64_t data_alloc_size = 4096;
+    uint32_t ext = 0;
+    uint64_t clone_id = 0;
+    uint64_t ext_flags = 0;
 
     std::vector<char> build() const {
         std::vector<char> out(4, 0); // length, filled in at the end
@@ -41,7 +45,7 @@ struct RecordBuilder {
             out.resize(at + sizeof(v));
             std::memcpy(out.data() + at, &v, sizeof(v));
         };
-        const uint32_t returned[5] = {common, 0, dir, file, 0};
+        const uint32_t returned[5] = {common, 0, dir, file, ext};
         for (uint32_t w : returned) put(w);
         if (common & kCmnError) put(error);
         size_t name_ref = 0;
@@ -61,6 +65,9 @@ struct RecordBuilder {
         if (file & kFileLinkCount) put(link_count);
         if (file & kFileAllocSize) put(alloc_size);
         if (file & kFileDataLength) put(data_length);
+        if (file & kFileDataAllocSize) put(data_alloc_size);
+        if (ext & kExtCloneId) put(clone_id);
+        if (ext & kExtFlags) put(ext_flags);
         if (common & kCmnName) {
             const auto offset = static_cast<int32_t>(out.size() - name_ref);
             const auto length = static_cast<uint32_t>(name.size() + 1);
@@ -119,6 +126,40 @@ TEST_CASE("bulk: a directory record carries its mount status and needs no file a
     CHECK(r.complete());
     CHECK(r.mount_status == kMountTrigger);
     CHECK(r.name == "Network");
+}
+
+TEST_CASE("bulk: clone attributes come after the file attributes") {
+    RecordBuilder pure;
+    pure.file |= kFileDataAllocSize;
+    pure.ext = kExtCloneId | kExtFlags;
+    pure.clone_id = 9001;
+    pure.ext_flags = kMayShareBlocks | kSharesAllBlocks;
+    const auto buf = pure.build();
+    Record r;
+    uint32_t length = 0;
+    REQUIRE(decode(buf, r, length) == Decode::ok);
+    CHECK(r.data_length == 5000); // still where it was
+    CHECK(r.data_alloc_size == 4096);
+    CHECK(r.clone_id == 9001);
+    CHECK(r.may_share_blocks());
+    CHECK(r.is_pure_clone());
+
+    RecordBuilder partial = pure;
+    partial.ext_flags = kMayShareBlocks; // changed since it was cloned
+    const auto buf2 = partial.build();
+    REQUIRE(decode(buf2, r, length) == Decode::ok);
+    CHECK(r.may_share_blocks());
+    CHECK_FALSE(r.is_pure_clone());
+
+    RecordBuilder plain;
+    plain.ext = kExtCloneId | kExtFlags;
+    const auto buf3 = plain.build();
+    REQUIRE(decode(buf3, r, length) == Decode::ok);
+    CHECK_FALSE(r.may_share_blocks());
+
+    RecordBuilder unasked = pure;
+    unasked.ext |= kExtPrivateSize; // not requested, so it would shift the fields
+    CHECK(decode(unasked.build(), r, length) == Decode::malformed);
 }
 
 TEST_CASE("bulk: a directory without its mount status is not trusted") {

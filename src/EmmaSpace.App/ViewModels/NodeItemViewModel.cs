@@ -81,6 +81,7 @@ public partial class NodeItemViewModel : ObservableObject
     public bool HasError => (Tree.Nodes[Node].Flags & NodeFlags.Error) != 0;
     public bool IsReparse => (Tree.Nodes[Node].Flags & NodeFlags.Reparse) != 0;
     public bool IsCloud => (Tree.Nodes[Node].Flags & NodeFlags.Cloud) != 0;
+    public bool IsClone => (Tree.Nodes[Node].Flags & NodeFlags.Clone) != 0;
     public bool IsDeleted => Tree.Nodes[Node].IsDeleted;
 
     public IBrush CategoryBrush => IsDirectory ? CategoryPalette.FolderBrush : CategoryPalette.BrushOf(Category);

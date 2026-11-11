@@ -15,6 +15,21 @@ public enum NodeFlags : ushort
     Cloud = 0x20,
     /// <summary>File counted here that has other hard links; deleting this name may not free the space.</summary>
     HasLinks = 0x40,
+    /// <summary>
+    /// File that shares disk blocks with other files (an APFS clone, macOS); deleting it may free less than its size on
+    /// disk. Of several pure clones only the first one found counts the shared blocks as allocated.
+    /// </summary>
+    Clone = 0x80,
+    /// <summary>
+    /// A pure clone (<see cref="Clone"/>) whose data is counted on another file of the same clone family, the first one
+    /// found. It keeps no copy of the data of its own.
+    /// </summary>
+    CloneShared = 0x100,
+    /// <summary>
+    /// The first pure clone of a family found, which counts the data its <see cref="CloneShared"/> clones share. A
+    /// <see cref="Clone"/> with neither bit was changed since it was cloned (or its share is unknown) and holds its own copy.
+    /// </summary>
+    CloneHolder = 0x200,
 }
 
 /// <summary>Mirror of <c>es_node</c> in emmascan.h. Must stay exactly 64 bytes.</summary>

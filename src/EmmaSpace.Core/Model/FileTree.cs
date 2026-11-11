@@ -166,8 +166,8 @@ public sealed class FileTree : IDisposable
             var n = stack.Pop();
             ref var removed = ref nodes[n];
             removed.Flags |= NodeFlags.Deleted;
-            // With hard links counted once, the bytes may still be held by another name.
-            if ((removed.Flags & (NodeFlags.HasLinks | NodeFlags.HardLink)) != 0) SizesApproximate = true;
+            // With hard links and clones counted once, the bytes may still be held by another name or clone.
+            if ((removed.Flags & (NodeFlags.HasLinks | NodeFlags.HardLink | NodeFlags.Clone)) != 0) SizesApproximate = true;
             for (var c = ToIndex(removed.FirstChild); c != None; c = ToIndex(nodes[c].NextSibling)) stack.Push(c);
         }
 
@@ -181,8 +181,8 @@ public sealed class FileTree : IDisposable
     }
 
     /// <summary>
-    /// True once a removal touched a file with other hard links: those bytes may still be in use
-    /// under another name, so totals are approximate until the next scan.
+    /// True once a removal touched a file with other hard links or an APFS clone: those bytes may still be in
+    /// use under another name or by another clone, so totals are approximate until the next scan.
     /// </summary>
     public bool SizesApproximate { get; private set; }
 
