@@ -14,6 +14,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -29,7 +31,7 @@ struct Options {
     uint32_t mode = ES_MODE_AUTO;
     uint32_t threads = 0;
     int repeat = 1;
-    const char* dump = nullptr;
+    std::filesystem::path dump;
 };
 
 const char* mode_name(uint32_t mode) {
@@ -69,7 +71,7 @@ std::string full_path(const es_result& r, uint32_t node) {
     return path;
 }
 
-bool dump(const es_result& r, const char* file) {
+bool dump(const es_result& r, const std::filesystem::path& file) {
     std::vector<std::string> lines;
     lines.reserve(r.node_count);
     for (uint32_t i = 0; i < r.node_count; ++i) {
@@ -80,13 +82,10 @@ bool dump(const es_result& r, const char* file) {
         lines.push_back(full_path(r, i) + tail);
     }
     std::sort(lines.begin(), lines.end());
-    FILE* out = std::fopen(file, "wb");
-    if (!out) return false;
-    for (const auto& line : lines) {
-        std::fwrite(line.data(), 1, line.size(), out);
-        std::fputc('\n', out);
-    }
-    return std::fclose(out) == 0;
+    std::ofstream out(file, std::ios::binary);
+    for (const auto& line : lines) out << line << '\n';
+    out.close();
+    return static_cast<bool>(out);
 }
 
 int run(const Options& o) {
@@ -112,8 +111,8 @@ int run(const Options& o) {
                     root.dir_count, static_cast<unsigned long long>(root.size),
                     static_cast<unsigned long long>(root.allocated), r.errors, r.node_count);
         std::fflush(stdout);
-        if (o.dump && i + 1 == o.repeat && !dump(r, o.dump)) {
-            std::fprintf(stderr, "could not write %s\n", o.dump);
+        if (!o.dump.empty() && i + 1 == o.repeat && !dump(r, o.dump)) {
+            std::fprintf(stderr, "could not write the dump file\n");
             es_scan_free(scan);
             return 1;
         }
@@ -132,13 +131,14 @@ int wmain(int argc, wchar_t** argv) {
         return s;
     };
     auto root = [&](int i) { return std::u16string(argv[i], argv[i] + std::wcslen(argv[i])); };
+    auto file = [&](int i) { return std::filesystem::path(argv[i]); }; // wide, so any name works
 #else
 int main(int argc, char** argv) {
     auto arg = [&](int i) { return std::string(argv[i]); };
     auto root = [&](int i) { return emmascan::utf8_to_utf16(argv[i]); };
+    auto file = [&](int i) { return std::filesystem::path(argv[i]); };
 #endif
     Options o;
-    std::string dump_file;
     for (int i = 1; i < argc; ++i) {
         const std::string a = arg(i);
         const bool has_value = i + 1 < argc;
@@ -149,7 +149,7 @@ int main(int argc, char** argv) {
         } else if (a == "--repeat" && has_value) {
             o.repeat = std::max(1, std::atoi(arg(++i).c_str()));
         } else if (a == "--dump" && has_value) {
-            dump_file = arg(++i);
+            o.dump = file(++i);
         } else if (a.starts_with("--") || !o.root.empty()) {
             return usage();
         } else {
@@ -157,6 +157,5 @@ int main(int argc, char** argv) {
         }
     }
     if (o.root.empty()) return usage();
-    if (!dump_file.empty()) o.dump = dump_file.c_str();
     return run(o);
 }

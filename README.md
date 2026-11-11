@@ -68,7 +68,7 @@ EmmaSpace.App   Avalonia views, view models, TreemapControl
 EmmaSpace.Core  FileTree (flat arrays) · analyzers · snapshots · export · scanners
       │  LibraryImport, zero-copy spans over native memory
 emmascan.dll    C++20: MFT reader (raw volume) · parallel walker (GetFileInformationByHandleEx) · Recycle Bin (IFileOperation)
-libemmascan     macOS/Linux: parallel walker (macOS: getattrlistbulk, Linux: openat/fstatat; firmlink and hard-link de-duplication, online-only iCloud items never downloaded, autofs triggers never entered) · Trash (NSFileManager)
+libemmascan     macOS/Linux: parallel walker (macOS: getattrlistbulk, Linux: openat/fstatat; firmlink and hard-link de-duplication, online-only iCloud items never downloaded, autofs triggers not entered on macOS) · Trash (NSFileManager)
                 Linux: ext4 reader (inode tables and directory blocks from the block device)
 emmascan-helper Linux: runs one scan as root for the app (started through pkexec), result over a pipe
 ```
@@ -133,9 +133,9 @@ On macOS (Apple M2, 16 GB, macOS 15.6, APFS with FileVault, warm cache, default 
 
 APFS itself sets the pace: even listing names alone costs about as much as listing every attribute,
 and more threads mostly add contention in the kernel. Both walkers give the same tree for `/usr`,
-`/Applications` and `/`, except that `getattrlistbulk` also lists the few dozen entries that
-`stat` refuses (sandboxed caches). `searchfs` reads a whole volume in one stream that cannot be split
-across threads, so it ends up twice as slow as the walker and is not used.
+`/Applications` and `/`, except that a folder that may be listed but not searched (`r--`) now counts as
+unreadable instead of showing up empty. `searchfs` reads a whole volume in one stream that cannot be
+split across threads, so it ends up twice as slow as the walker and is not used.
 
 ## Build and run
 

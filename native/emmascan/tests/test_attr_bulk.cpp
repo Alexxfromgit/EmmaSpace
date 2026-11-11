@@ -36,9 +36,10 @@ struct RecordBuilder {
 
     std::vector<char> build() const {
         std::vector<char> out(4, 0); // length, filled in at the end
-        auto put = [&out](const auto& v) {
-            const auto* p = reinterpret_cast<const char*>(&v);
-            out.insert(out.end(), p, p + sizeof(v));
+        auto put = [&out](const auto& v) { // resize + memcpy: GCC 13 warns (wrongly) about insert() here
+            const size_t at = out.size();
+            out.resize(at + sizeof(v));
+            std::memcpy(out.data() + at, &v, sizeof(v));
         };
         const uint32_t returned[5] = {common, 0, dir, file, 0};
         for (uint32_t w : returned) put(w);
@@ -137,6 +138,31 @@ TEST_CASE("bulk: records follow each other by their length") {
     CHECK(r.file_id == 43);
 }
 
+TEST_CASE("bulk: the file type comes from the object type, not the access mask") {
+    RecordBuilder b;
+    b.mode = 0644;          // permission bits only, as getattrlist(2) promises
+    b.obj_type = 5;         // VLNK
+    const auto buf = b.build();
+    Record r;
+    uint32_t length = 0;
+    REQUIRE(decode(buf, r, length) == Decode::ok);
+    CHECK(r.st_mode() == (0120000u | 0644u));
+    CHECK(r.complete());
+
+    b.mode = 0100755;       // type bits that disagree with the object type are dropped
+    b.obj_type = kTypeDirectory;
+    b.dir = kDirMountStatus;
+    b.file = 0;
+    const auto buf2 = b.build();
+    REQUIRE(decode(buf2, r, length) == Decode::ok);
+    CHECK(r.st_mode() == (0040000u | 0755u));
+
+    b.obj_type = 99;        // unknown type: described with fstatat() instead
+    const auto buf3 = b.build();
+    REQUIRE(decode(buf3, r, length) == Decode::ok);
+    CHECK_FALSE(r.complete());
+}
+
 TEST_CASE("bulk: an entry with an error is reported, not trusted") {
     RecordBuilder b;
     b.common = kCmnReturnedAttrs | kCmnError | kCmnName;
@@ -233,8 +259,8 @@ TEST_CASE("bulk: broken lengths and offsets are refused") {
 }
 
 TEST_CASE("bulk: damaged batches never read outside the buffer") {
-    // Run under ASan in CI: random corruption and truncation of a valid batch must only ever give
-    // ok, skip or malformed.
+    // Random corruption and truncation of a valid batch must only ever give ok, skip or malformed; run
+    // the tests under ASan (see CONTRIBUTING) to catch any read outside the buffer.
     std::vector<char> batch;
     for (int i = 0; i < 8; ++i) {
         RecordBuilder b;

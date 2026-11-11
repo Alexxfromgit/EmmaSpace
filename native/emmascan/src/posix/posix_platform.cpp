@@ -7,8 +7,8 @@
 // - Hard links: files with st_nlink > 1 are counted once (later links get ES_NODE_HARDLINK, size 0).
 // - Directories reached twice (macOS firmlinks such as /Users and /System/Volumes/Data/Users
 //   share the same device and inode) are listed once; later sightings are flagged as links.
-// - Symbolic links are recorded but never followed. On macOS, autofs triggers (e.g. /Network) are
-//   recorded but never looked into, because that would mount them.
+// - Symbolic links are recorded but never followed. With getattrlistbulk, autofs triggers (e.g. /Network)
+//   are recorded but never looked into, because that would mount them; readdir cannot tell them apart.
 // - Online-only iCloud / File Provider items ("dataless") count only their local bytes; such folders
 //   are not listed, and the worker threads refuse to materialize anything, so a scan never downloads.
 // - When scanning "/", pseudo file systems and other mounted volumes are skipped.
@@ -92,7 +92,12 @@ static_assert(bulk::kCmnName == ATTR_CMN_NAME && bulk::kCmnDevId == ATTR_CMN_DEV
 static_assert(bulk::kDirMountStatus == ATTR_DIR_MOUNTSTATUS && bulk::kFileLinkCount == ATTR_FILE_LINKCOUNT &&
               bulk::kFileAllocSize == ATTR_FILE_ALLOCSIZE && bulk::kFileDataLength == ATTR_FILE_DATALENGTH);
 static_assert(bulk::kTypeDirectory == VDIR && bulk::kMountPoint == DIR_MNTSTATUS_MNTPOINT &&
-              bulk::kMountTrigger == DIR_MNTSTATUS_TRIGGER && bulk::kFlagFirmlink == SF_FIRMLINK);
+              bulk::kMountTrigger == DIR_MNTSTATUS_TRIGGER && bulk::kFlagFirmlink == SF_FIRMLINK &&
+              bulk::kFlagDataVault == UF_DATAVAULT);
+static_assert(bulk::mode_type_of(VREG) == S_IFREG && bulk::mode_type_of(VDIR) == S_IFDIR &&
+              bulk::mode_type_of(VBLK) == S_IFBLK && bulk::mode_type_of(VCHR) == S_IFCHR &&
+              bulk::mode_type_of(VLNK) == S_IFLNK && bulk::mode_type_of(VSOCK) == S_IFSOCK &&
+              bulk::mode_type_of(VFIFO) == S_IFIFO);
 static_assert(sizeof(attribute_set_t) == 5 * sizeof(uint32_t) && sizeof(attrreference_t) == 8 &&
               sizeof(dev_t) == sizeof(int32_t) && sizeof(fsobj_type_t) == sizeof(uint32_t) &&
               sizeof(struct timespec) == 16 && sizeof(off_t) == 8);
@@ -257,7 +262,9 @@ private:
     }
 
 #if defined(__APPLE__)
-    enum class Bulk { listed, unsupported, failed };
+    // partial: some entries were read, then the listing broke off (an I/O error, or a batch that could not
+    // be decoded). What was read is kept and the folder is flagged as not fully read.
+    enum class Bulk { listed, partial, unsupported, failed };
 
     // getattrlistbulk: one call describes a whole batch of entries, instead of one fstatat() each.
     // Does not close `fd`.
@@ -274,8 +281,12 @@ private:
             const int count = getattrlistbulk(fd, &request, s.bulk_buffer.data(), s.bulk_buffer.size(), 0);
             if (count < 0) {
                 if (errno == EINTR) continue;
-                if (!first_batch) return Bulk::listed; // keep what was read, as readdir does when it stops early
-                return errno == ENOTSUP || errno == EINVAL ? Bulk::unsupported : Bulk::failed;
+                // ERANGE means "the buffer holds not even one entry", which 256 KiB always does; nullfs (the
+                // wrappers of iOS apps on a Mac) returns it at the end of every listing instead of 0.
+                if (!first_batch) return errno == ERANGE ? Bulk::listed : Bulk::partial;
+                // A folder that may be listed but not searched (r without x) fails here with EACCES. readdir
+                // would show it empty, as every fstatat inside it fails; flagging it as unreadable is honest.
+                return errno == ENOTSUP || errno == EINVAL || errno == ERANGE ? Bulk::unsupported : Bulk::failed;
             }
             if (count == 0) return Bulk::listed;
             first_batch = false;
@@ -286,7 +297,7 @@ private:
                 bulk::Record r;
                 uint32_t length = 0;
                 const auto decoded = bulk::decode_record(p, static_cast<size_t>(end - p), r, length);
-                if (decoded == bulk::Decode::malformed) break; // nothing after this can be located
+                if (decoded == bulk::Decode::malformed) return Bulk::partial; // nothing after it can be located
                 p += length;
                 if (decoded == bulk::Decode::skip) continue;
                 add_bulk_entry(item, fd, r, s);
@@ -300,8 +311,9 @@ private:
         const bool trigger = r.is_directory() && (r.mount_status & bulk::kMountTrigger);
         // A firmlink or mount point is described as the link or the covered folder, not as what a path
         // through it reaches. fstatat() reports the latter, which the de-duplication relies on. An entry
-        // with an error or missing attributes gets the same treatment. Triggers are never looked up.
-        const bool ask_stat = r.error != 0 || !r.complete() ||
+        // with an error or missing attributes gets the same treatment, and so does a data vault: stat() is
+        // refused there, and such entries stay out of the tree as with readdir. Triggers are never looked up.
+        const bool ask_stat = r.error != 0 || !r.complete() || (r.flags & bulk::kFlagDataVault) ||
                               (r.is_directory() && !trigger &&
                                ((r.flags & bulk::kFlagFirmlink) || (r.mount_status & bulk::kMountPoint)));
         struct stat st{};
@@ -310,47 +322,57 @@ private:
         } else {
             st.st_dev = r.dev;
             st.st_ino = r.file_id;
-            st.st_mode = static_cast<mode_t>(r.mode);
+            st.st_mode = static_cast<mode_t>(r.st_mode());
             st.st_flags = r.flags;
             st.st_nlink = static_cast<nlink_t>(std::min<uint32_t>(r.link_count, std::numeric_limits<nlink_t>::max()));
             st.st_size = std::max<int64_t>(r.data_length, 0);
             st.st_blocks = static_cast<blkcnt_t>((std::max<int64_t>(r.alloc_size, 0) + 511) / 512);
             st.st_mtimespec = {static_cast<time_t>(r.mtime.sec), static_cast<long>(r.mtime.nsec)};
             st.st_atimespec = {static_cast<time_t>(r.atime.sec), static_cast<long>(r.atime.nsec)};
-            if (trigger) st.st_mode = (st.st_mode & 07777) | S_IFDIR; // even if the record left the mode out
         }
         add_entry(item, name, st, trigger, s);
     }
 #endif
 
+    // Closes the folder's descriptor on every path out, including an exception, until list_readdir takes it.
+    struct FdGuard {
+        int fd;
+        ~FdGuard() {
+            if (fd >= 0) close(fd);
+        }
+        int release() { return std::exchange(fd, -1); }
+    };
+
     void list_directory(const WorkItem& item, Scratch& s) {
         s.clear();
-        const int fd = open(item.path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-        if (fd < 0) {
+        FdGuard fd{open(item.path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC)};
+        if (fd.fd < 0) {
             fail(item.node);
             return;
         }
-        bool listed = false;
+        bool listed = false, partial = false;
 #if defined(__APPLE__)
         if (bulk_enabled()) {
-            switch (list_bulk(item, fd, s)) {
+            switch (list_bulk(item, fd.fd, s)) {
             case Bulk::listed:
                 listed = true;
                 break;
+            case Bulk::partial:
+                listed = partial = true;
+                break;
             case Bulk::failed:
-                close(fd);
                 fail(item.node);
                 return;
             case Bulk::unsupported:
                 break;
             }
         }
-        if (listed) close(fd);
 #endif
-        if (!listed && !list_readdir(item, fd, s)) {
+        if (!listed && !list_readdir(item, fd.release(), s)) {
             fail(item.node);
             return;
         }
+        if (partial) fail(item.node); // what was read so far is still added below
 
         for (size_t i = 0; i < s.entries.size(); ++i) s.entries[i].name = s.names[i];
         uint32_t first;
