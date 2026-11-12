@@ -9,6 +9,7 @@ using EmmaSpace.Core.Export;
 using EmmaSpace.Core.Formatting;
 using EmmaSpace.Core.Interop;
 using EmmaSpace.Core.Model;
+using EmmaSpace.Core.Notices;
 using EmmaSpace.Core.Platform;
 using EmmaSpace.Core.Scanning;
 using EmmaSpace.Core.Snapshots;
@@ -35,7 +36,18 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
     private Task _snapshotLoad = Task.CompletedTask; // the latest snapshot load, which the next offer waits for
     private bool _snapshotHandedOver; // a snapshot came from outside already, so later ones are asked about
     private bool _syncingSelection;
-    private bool _privacyHintDismissed; // for this session
+    private readonly HashSet<string> _dismissedNotices = []; // keys the user dismissed, for this session
+    // macOS: what diskutil said last. Kept across refreshes of the start page, so cards and notices don't blink out and
+    // back (and aren't posted again) while it is asked anew.
+    private IReadOnlyList<MacVolume>? _macVolumes;
+    private bool _diskInfoFailed; // diskutil didn't answer the last time it was asked
+    private bool _inspecting, _inspectAgain; // one diskutil run at a time; a refresh during one asks for another after it
+    private bool _inspectedOnce;
+    private HashSet<string> _unavailableSeen = []; // volumes unmounted at the last look, by MacVolume.Key
+    private HashSet<string> _unavailableShown = []; // of those, the ones shown: unmounted at two looks in a row
+    private readonly Dictionary<string, VolumeSpace> _lastSpace = []; // macOS: Finder's figures last measured, by path
+    private IReadOnlyList<string> _hiddenMounts = []; // mounts the start page leaves out (Finder hides them too)
+    private readonly CancellationTokenSource _watchCts = new();
 
     public MainWindowViewModel(IScanner scanner, IFileActions fileActions, IDialogService dialogs, SettingsService settings,
         ElevationService elevation, UpdateViewModel updates, HashCacheService hashCache)
@@ -58,6 +70,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
         Compare = new CompareViewModel(this, dialogs);
         PathText = settings.Current.LastPath ?? "";
         RefreshDrives();
+        _ = WatchDrivesAsync(_watchCts.Token);
     }
 
     public FolderTreeViewModel FolderTree { get; }
@@ -212,49 +225,257 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
     [ObservableProperty]
     public partial string? SnapshotBanner { get; private set; }
 
-    /// <summary>macOS: the scan missed private folders because Emma Space has no Full Disk Access.</summary>
-    [ObservableProperty]
-    public partial bool ShowPrivacyHint { get; private set; }
+    // Notices: what Emma Space noticed, what it can't do and why, and what the user can do about it
 
-    public static string PrivacyHintText { get; } =
-        "Some folders could not be read. macOS keeps Mail, Messages, Safari and other apps' data private unless Emma Space " +
-        "has Full Disk Access. To include them, add Emma Space under Full Disk Access in System Settings (with + if it " +
-        "isn't listed), turn it on, then quit and reopen Emma Space and scan again.";
+    /// <summary>Notices on the start page: about the drives (locked, backup disks, hidden volumes, purgeable space).</summary>
+    public ObservableCollection<NoticeViewModel> HomeNotices { get; } = [];
 
-    [RelayCommand]
-    private async Task OpenPrivacySettingsAsync()
+    /// <summary>Notices above the results: about the scan on screen (unreadable folders, backup disks).</summary>
+    public ObservableCollection<NoticeViewModel> ResultNotices { get; } = [];
+
+    /// <summary>
+    /// Raised on the UI thread for each notice when it appears, so other parts of the app (the Emma companion) can voice
+    /// it too. Not raised again while it stays on screen, even when its wording is updated (same key).
+    /// </summary>
+    public event EventHandler<Notice>? NoticePosted;
+
+    /// <summary>Raised on the UI thread when a notice leaves the screen: what it said no longer holds, or it was dismissed.</summary>
+    public event EventHandler<Notice>? NoticeWithdrawn;
+
+    private void ShowNotices(ObservableCollection<NoticeViewModel> shown, IEnumerable<Notice> notices)
     {
+        var wanted = notices.Where(n => !_dismissedNotices.Contains(n.Key)).ToList();
+        if (wanted.Count == shown.Count && wanted.Zip(shown).All(p => SameNotice(p.First, p.Second.Notice))) return;
+        var before = shown.Select(n => n.Notice).ToList();
+        shown.Clear();
+        foreach (var n in wanted) shown.Add(new NoticeViewModel(n, RunNoticeActionAsync, n.CanDismiss ? DismissNotice : null));
+        var wantedKeys = wanted.Select(n => n.Key).ToHashSet();
+        var beforeKeys = before.Select(n => n.Key).ToHashSet();
+        foreach (var n in before.Where(n => !wantedKeys.Contains(n.Key))) NoticeWithdrawn?.Invoke(this, n);
+        foreach (var n in wanted.Where(n => !beforeKeys.Contains(n.Key))) NoticePosted?.Invoke(this, n);
+    }
+
+    // Records compare their action lists by reference, so compare what is shown instead.
+    private static bool SameNotice(Notice a, Notice b) =>
+        a.Key == b.Key && a.Level == b.Level && a.Title == b.Title && a.Message == b.Message && a.Details == b.Details &&
+        a.CanDismiss == b.CanDismiss && a.Actions.SequenceEqual(b.Actions);
+
+    private void DismissNotice(Notice notice)
+    {
+        _dismissedNotices.Add(notice.Key);
+        foreach (var list in (ObservableCollection<NoticeViewModel>[])[HomeNotices, ResultNotices])
+            if (list.FirstOrDefault(n => n.Key == notice.Key) is { } shown)
+            {
+                list.Remove(shown);
+                NoticeWithdrawn?.Invoke(this, notice);
+            }
+    }
+
+    private async Task RunNoticeActionAsync(Notice notice, NoticeAction action)
+    {
+        if (action.Id == NoticeActions.LearnMore)
+        {
+            // The explanation, with the notice's first other action as the dialog's button.
+            var next = notice.Actions.FirstOrDefault(a => a.Id != NoticeActions.LearnMore);
+            if (await _dialogs.ConfirmAsync(notice.Title, notice.Details ?? notice.Message, next?.Label ?? "OK",
+                    cancelText: "Close") && next is not null)
+                await RunNoticeActionAsync(notice, next);
+            return;
+        }
+        Action? open = action.Id switch
+        {
+            NoticeActions.MountVolume when action.Argument is { } device => () => MacDisks.Mount(device),
+            NoticeActions.OpenStorageSettings => MacStorage.OpenStorageSettings,
+            NoticeActions.OpenTimeMachineSettings => MacStorage.OpenTimeMachineSettings,
+            NoticeActions.OpenDiskUtility => MacStorage.OpenDiskUtility,
+            NoticeActions.OpenPrivacySettings => MacPrivacy.OpenFullDiskAccessSettings,
+            _ => null,
+        };
+        if (open is null) return;
         try
         {
-            await Task.Run(MacPrivacy.OpenFullDiskAccessSettings);
+            await Task.Run(open);
         }
         catch (IOException ex)
         {
-            await _dialogs.ShowErrorAsync("Full Disk Access", ex.Message);
+            await _dialogs.ShowErrorAsync(action.Label, ex.Message);
+            return;
         }
+        // A mounted drive shows up at once, rather than at the next look for changes.
+        if (action.Id == NoticeActions.MountVolume && IsHome) RefreshDrives();
     }
 
-    [RelayCommand]
-    private void DismissPrivacyHint()
+    private void UpdateHomeNotices()
     {
-        _privacyHintDismissed = true;
-        ShowPrivacyHint = false;
+        var notices = new List<Notice>();
+        foreach (var d in Drives.Where(d => d.IsUnavailable && d.Volume is not null))
+            notices.Add(d.IsLocked ? AppNotices.LockedDrive(d.Volume!) : AppNotices.UnmountedDrive(d.Volume!));
+        var attributed = new HashSet<string>();
+        foreach (var d in Drives.Where(d => d.IsBackup && d.Volume is not null))
+        {
+            var mounts = _hiddenMounts.Where(m => string.Equals(MacDisks.TimeMachineMountSource(m), d.Volume!.Uuid,
+                StringComparison.OrdinalIgnoreCase)).ToList();
+            attributed.UnionWith(mounts);
+            notices.Add(AppNotices.BackupDrive(d.Volume!, mounts, ByteSize.Format));
+        }
+        // Until diskutil has answered, a Time Machine mount can't be tied to its drive yet: say nothing about it for now.
+        var unexplained = _hiddenMounts.Where(m => !attributed.Contains(m) &&
+                                                   (_macVolumes is not null || MacDisks.TimeMachineMountSource(m) is null)).ToList();
+        if (unexplained.Count > 0)
+            notices.Add(AppNotices.HiddenMounts(unexplained, m => MacDisks.TimeMachineMountSource(m) is { } uuid
+                ? _macVolumes?.FirstOrDefault(v => string.Equals(v.Uuid, uuid, StringComparison.OrdinalIgnoreCase))?.Name
+                : null));
+        if (_diskInfoFailed) notices.Add(AppNotices.DiskInfoUnavailable());
+        if (Drives.FirstOrDefault(d => d.HasPurgeable) is { } p)
+            notices.Add(AppNotices.Purgeable(p.Name, p.Space.Free, p.Space.Purgeable, ByteSize.Format));
+        ShowNotices(HomeNotices, notices);
     }
 
-    private static bool NeedsPrivacyHint(FileTree? tree) =>
-        OperatingSystem.IsMacOS() && tree is { Info.Source: not ScanSource.Snapshot, Info.Errors: > 0 } &&
-        MacPrivacy.MayCoverProtectedData(tree.Info.RootPath, Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)) &&
-        MacPrivacy.HasFullDiskAccess() == false;
+    private void UpdateResultNotices()
+    {
+        var tree = Tree;
+        var notices = new List<Notice>();
+        if (tree is { Info.Source: not ScanSource.Snapshot })
+        {
+            ref readonly var root = ref tree.Nodes[FileTree.Root];
+            var rootPath = Path.TrimEndingDirectorySeparator(tree.Info.RootPath);
+            var rootUnreadable = (root.Flags & NodeFlags.Error) != 0 && root.FileCount == 0 && root.DirCount == 0;
+            var backup = OperatingSystem.IsMacOS() ? _macVolumes?.FirstOrDefault(v => v.IsBackup && v.MountPoint == rootPath) : null;
+            if (backup is not null) notices.Add(AppNotices.BackupScan(backup, root.Allocated, !rootUnreadable, ByteSize.Format));
+            // Full Disk Access is the answer only where macOS guards the data: the user's private folders, backup disks and
+            // other drives. A folder only POSIX permissions keep closed (/private/var/root) needs no such advice.
+            var guarded = backup is not null || (rootUnreadable && rootPath.StartsWith("/Volumes/", StringComparison.Ordinal)) ||
+                          MacPrivacy.MayCoverProtectedData(tree.Info.RootPath, Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+            if (OperatingSystem.IsMacOS() && tree.Info.Errors > 0 && guarded && MacPrivacy.HasFullDiskAccess() == false)
+                notices.Add(AppNotices.FullDiskAccess(rootPath));
+            // The backup notice already says the map is empty and why.
+            if (rootUnreadable && backup is null) notices.Add(AppNotices.RootUnreadable(tree.Info.RootPath));
+        }
+        ShowNotices(ResultNotices, notices);
+    }
 
     [RelayCommand]
     private void RefreshDrives()
     {
+        var found = DriveViewModel.Discover();
         Drives.Clear();
-        foreach (var d in DriveViewModel.Discover()) Drives.Add(d);
-        OnPropertyChanged(nameof(PurgeableNote));
-        // macOS: Finder's available space comes from a system service that can be slow, as can a sleeping disk, so each
-        // drive is asked off the UI thread on its own and its card filled in when its answer is in.
-        foreach (var d in Drives.Where(d => d.IsMeasuring)) _ = MeasureDriveAsync(d);
+        foreach (var d in found.Drives) Drives.Add(d);
+        _hiddenMounts = found.HiddenMounts;
+        // What diskutil and the space query said last stands in until they answer again, so nothing blinks.
+        ApplyVolumes();
+        foreach (var d in Drives.Where(d => d.IsMeasuring))
+            if (_lastSpace.TryGetValue(d.Path, out var space)) d.SetMeasured(space);
+        UpdateHomeNotices();
+        // macOS: Finder's available space comes from a system service that can be slow, so it is asked off the UI thread
+        // and the card updated when its answer is in.
+        foreach (var d in Drives.Where(d => d.IsMeasuring || _lastSpace.ContainsKey(d.Path))) _ = MeasureDriveAsync(d);
+        if (OperatingSystem.IsMacOS()) _ = InspectDisksAsync();
+    }
+
+    // macOS: diskutil names the drives as Finder does and tells locked, unmounted and Time Machine backup disks apart. It
+    // takes a fraction of a second, so it runs off the UI thread, one run at a time, and the cards follow its answer.
+    private async Task InspectDisksAsync()
+    {
+        if (_inspecting)
+        {
+            _inspectAgain = true;
+            return;
+        }
+        _inspecting = true;
+        try
+        {
+            do
+            {
+                _inspectAgain = false;
+                IReadOnlyList<MacVolume>? volumes;
+                try
+                {
+                    volumes = await Task.Run(MacDisks.List);
+                }
+                catch (Exception)
+                {
+                    volumes = null;
+                }
+                _diskInfoFailed = volumes is null;
+                if (volumes is not null)
+                {
+                    // A drive that was just plugged in is unmounted for a moment before macOS mounts it: show a volume as
+                    // unmounted only once it was so at two looks in a row, and look again soon after a new one.
+                    var now = volumes.Where(v => v.IsUnavailable).Select(v => v.Key).ToHashSet();
+                    _unavailableShown = _inspectedOnce ? now.Where(_unavailableSeen.Contains).ToHashSet() : now;
+                    if (_inspectedOnce && now.Any(k => !_unavailableSeen.Contains(k))) _ = InspectAgainSoonAsync();
+                    _unavailableSeen = now;
+                    _macVolumes = volumes;
+                    _inspectedOnce = true;
+                }
+                ApplyVolumes();
+                UpdateHomeNotices();
+                if (Tree is not null) UpdateResultNotices();
+            } while (_inspectAgain);
+        }
+        finally
+        {
+            _inspecting = false;
+        }
+    }
+
+    private async Task InspectAgainSoonAsync()
+    {
+        await Task.Delay(TimeSpan.FromSeconds(4));
+        if (IsHome) await InspectDisksAsync();
+    }
+
+    // Names the cards as diskutil does, and shows cards for volumes that hold files but aren't mounted (locked, or ejected
+    // while their disk stays attached): .NET doesn't see those, and the user should know why they can't be scanned.
+    private void ApplyVolumes()
+    {
+        if (_macVolumes is not { } volumes) return;
+        foreach (var d in Drives.Where(d => !d.IsUnavailable))
+            if (volumes.FirstOrDefault(v => v.MountPoint is not null && v.MountPoint == Path.TrimEndingDirectorySeparator(d.Path)) is { } v)
+                d.SetVolume(v);
+        var wanted = volumes.Where(v => v.IsUnavailable && _unavailableShown.Contains(v.Key)).ToList();
+        for (var i = Drives.Count - 1; i >= 0; i--)
+            if (Drives[i] is { IsUnavailable: true } card && !wanted.Any(v => v == card.Volume))
+                Drives.RemoveAt(i);
+        var at = Drives.Count > 0 && Drives[^1].IsUserFolder ? Drives.Count - 1 : Drives.Count;
+        foreach (var v in wanted.Where(v => !Drives.Any(d => d.IsUnavailable && d.Volume == v)))
+            Drives.Insert(at++, DriveViewModel.Unavailable(v));
+    }
+
+    // Refreshes the start page when a drive is attached, unlocked, mounted or ejected, so a newly unlocked drive appears
+    // without the user having to look for a refresh. Cheap: the mounts the start page lists (hidden ones included, which
+    // its notices mention) and, on macOS, the whole-disk /dev entries.
+    private async Task WatchDrivesAsync(CancellationToken cancel)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(3));
+        var last = await Task.Run(DriveSignature, cancel);
+        try
+        {
+            while (await timer.WaitForNextTickAsync(cancel))
+            {
+                if (!IsHome) continue;
+                var now = await Task.Run(DriveSignature, cancel);
+                if (now == last) continue;
+                last = now;
+                if (IsHome) RefreshDrives();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private static string DriveSignature()
+    {
+        try
+        {
+            return string.Join('\n', DriveInfo.GetDrives().Select(d => d.Name).Where(DriveViewModel.IsListedMount)) + "\n" +
+                   MacDisks.DeviceSignature();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return "";
+        }
     }
 
     /// <summary>A drive that hasn't answered by then shows DriveInfo's figures rather than none.</summary>
@@ -271,39 +492,18 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
         }
         catch (Exception)
         {
-            // Timed out or failed: keep DriveInfo's figures. A late answer is ignored.
+            // Timed out or failed: keep the figures shown (the last ones, or DriveInfo's). A late answer is ignored.
         }
-        drive.SetMeasured(space);
-        OnPropertyChanged(nameof(PurgeableNote));
-    }
-
-    // macOS: the first drive (the startup disk comes first) whose available space includes purgeable data.
-    private DriveViewModel? PurgeableDrive => Drives.FirstOrDefault(d => d.HasPurgeable);
-
-    /// <summary>Start page note on why "available" is more than the empty space; null when there's nothing to explain.</summary>
-    public string? PurgeableNote => PurgeableDrive is { } d ? MacStorage.Note(d.Name, d.Space.Purgeable, ByteSize.Format) : null;
-
-    [RelayCommand]
-    private async Task ExplainPurgeableAsync()
-    {
-        if (PurgeableDrive is not { } d) return;
-        if (await _dialogs.ConfirmAsync("What is purgeable space?",
-                MacStorage.Explanation(d.Name, d.Space.Free, d.Space.Purgeable, ByteSize.Format), "Open Storage Settings",
-                cancelText: "Close"))
-            await OpenStorageSettingsAsync();
-    }
-
-    [RelayCommand]
-    private async Task OpenStorageSettingsAsync()
-    {
-        try
+        if (space is { } s)
         {
-            await Task.Run(MacStorage.OpenStorageSettings);
+            _lastSpace[drive.Path] = s;
+            drive.SetMeasured(s);
         }
-        catch (IOException ex)
+        else if (drive.IsMeasuring)
         {
-            await _dialogs.ShowErrorAsync("Storage Settings", ex.Message);
+            drive.SetMeasured(null);
         }
+        UpdateHomeNotices();
     }
 
     [RelayCommand]
@@ -318,6 +518,12 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
     [RelayCommand]
     private Task ScanDriveAsync(DriveViewModel drive)
     {
+        // A locked or unmounted drive has nothing to scan yet: explain why, and what to do.
+        if (drive is { IsUnavailable: true, Volume: { } volume })
+        {
+            var notice = drive.IsLocked ? AppNotices.LockedDrive(volume) : AppNotices.UnmountedDrive(volume);
+            return RunNoticeActionAsync(notice, NoticeActions.LearnMoreAction);
+        }
         PathText = drive.Path;
         return ScanPathAsync(drive.Path);
     }
@@ -533,7 +739,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
         SnapshotBanner = tree?.Info.Source == ScanSource.Snapshot
             ? $"Viewing a snapshot taken {tree.Info.ScannedAt.ToString("g", CultureInfo.CurrentCulture)}. Rescan to see the current state."
             : null;
-        ShowPrivacyHint = !_privacyHintDismissed && NeedsPrivacyHint(tree);
+        UpdateResultNotices();
         TreeRevision++;
 
         // Background work holds leases, so the native memory is only freed once it finishes.
@@ -564,7 +770,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
             ScanSource.Managed => "managed scan",
             _ => "snapshot",
         };
-        var errors = info.Errors > 0 ? $" · {info.Errors:N0} folders could not be read" : "";
+        var errors = info.Errors > 0 ? $" · {AppNotices.Count(info.Errors, "folder", "folders")} could not be read" : "";
         ScanInfoText = $"{source} in {info.Elapsed.TotalSeconds:0.0} s{errors}";
     }
 
@@ -972,6 +1178,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
 
     public void Dispose()
     {
+        _watchCts.Cancel();
         _scanCts?.Cancel();
         foreach (var vm in AnalysisViewModels) vm.Cancel();
         Tree?.Dispose();

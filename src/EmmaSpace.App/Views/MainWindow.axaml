@@ -9,6 +9,39 @@
         Width="1320" Height="700" MinWidth="960" MinHeight="580"
         WindowStartupLocation="CenterScreen">
 
+  <Window.Resources>
+    <!-- A notice (start page and above the results): what Emma Space noticed, what it can't do and why, and what the
+         user can do. Warnings get a line in the danger colour on the left. -->
+    <DataTemplate x:Key="NoticeCard" x:DataType="vm:NoticeViewModel">
+      <Border Classes="card" Background="{DynamicResource EmmaAccentSoftBrush}" Padding="0" Margin="0,0,0,10" ClipToBounds="True">
+        <DockPanel>
+          <Border DockPanel.Dock="Left" Width="4" IsVisible="{Binding IsWarning}" Background="{DynamicResource EmmaDangerBrush}" />
+          <DockPanel Margin="14,10">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="12,0,0,0">
+              <ItemsControl ItemsSource="{Binding Buttons}">
+                <ItemsControl.ItemsPanel>
+                  <ItemsPanelTemplate>
+                    <StackPanel Orientation="Horizontal" Spacing="8" />
+                  </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vm:NoticeButton">
+                    <Button Content="{Binding Label}" Command="{Binding Command}" />
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+              <Button Classes="subtle" Content="Dismiss" Command="{Binding DismissCommand}" IsVisible="{Binding CanDismiss}" />
+            </StackPanel>
+            <StackPanel Spacing="2" VerticalAlignment="Center">
+              <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding Message}" TextWrapping="Wrap" />
+            </StackPanel>
+          </DockPanel>
+        </DockPanel>
+      </Border>
+    </DataTemplate>
+  </Window.Resources>
+
   <Window.Styles>
     <!-- Item menu for rows of tables marked "nodes" (items are NodeItemViewModel) and the treemap.
          The Template builds one menu per control. -->
@@ -197,18 +230,9 @@
               </DataTemplate>
             </ItemsControl.ItemTemplate>
           </ItemsControl>
-          <!-- macOS: Finder's "available" includes purgeable data; say what that is, so the figures don't look wrong. -->
-          <Border Classes="card" Background="{DynamicResource EmmaAccentSoftBrush}" Padding="14,8" Margin="0,0,14,14"
-                  HorizontalAlignment="Left" MaxWidth="928"
-                  IsVisible="{Binding PurgeableNote, Converter={x:Static ObjectConverters.IsNotNull}}">
-            <DockPanel>
-              <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="12,0,0,0">
-                <Button Content="Learn more" Command="{Binding ExplainPurgeableCommand}" />
-                <Button Classes="subtle" Content="Open Storage Settings" Command="{Binding OpenStorageSettingsCommand}" />
-              </StackPanel>
-              <TextBlock Text="{Binding PurgeableNote}" TextWrapping="Wrap" VerticalAlignment="Center" />
-            </DockPanel>
-          </Border>
+          <!-- What Emma Space noticed about the drives: locked drives, backup disks, hidden volumes, purgeable space. -->
+          <ItemsControl ItemsSource="{Binding HomeNotices}" ItemTemplate="{StaticResource NoticeCard}" MaxWidth="928"
+                        HorizontalAlignment="Left" Margin="0,0,14,4" />
           <Button Classes="link" Content="Choose another folder…" Command="{Binding BrowseCommand}" HorizontalAlignment="Left" />
         </StackPanel>
       </ScrollViewer>
@@ -219,16 +243,8 @@
                 IsVisible="{Binding SnapshotBanner, Converter={x:Static ObjectConverters.IsNotNull}}">
           <TextBlock Text="{Binding SnapshotBanner}" TextWrapping="Wrap" />
         </Border>
-        <Border DockPanel.Dock="Top" Classes="card" Background="{DynamicResource EmmaAccentSoftBrush}" Padding="14,8" Margin="0,0,0,10"
-                IsVisible="{Binding ShowPrivacyHint}">
-          <DockPanel>
-            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="12,0,0,0">
-              <Button Content="Open Privacy Settings" Command="{Binding OpenPrivacySettingsCommand}" />
-              <Button Classes="subtle" Content="Dismiss" Command="{Binding DismissPrivacyHintCommand}" />
-            </StackPanel>
-            <TextBlock Text="{x:Static vm:MainWindowViewModel.PrivacyHintText}" TextWrapping="Wrap" VerticalAlignment="Center" />
-          </DockPanel>
-        </Border>
+        <!-- What Emma Space noticed about this scan: unreadable folders, backup disks. -->
+        <ItemsControl DockPanel.Dock="Top" ItemsSource="{Binding ResultNotices}" ItemTemplate="{StaticResource NoticeCard}" />
 
         <Grid ColumnDefinitions="5*,10,6*">
           <!-- Folder tree -->

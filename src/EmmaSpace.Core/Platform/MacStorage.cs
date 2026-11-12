@@ -29,6 +29,20 @@ public static class MacStorage
         "in the map, while System Settings leaves them out of \"used\". Time Machine snapshots are not files, so a scan " +
         "doesn't see them. That is why a scan of the whole disk rarely matches what System Settings shows as used.";
 
+    /// <summary>Opens System Settings → General → Time Machine (macOS 13 and later; before, the Time Machine pane).</summary>
+    public const string TimeMachineSettingsUrl = "x-apple.systempreferences:com.apple.Time-Machine-Settings.extension";
+
+    private const string LegacyTimeMachineSettingsUrl = "x-apple.systempreferences:com.apple.prefs.backup";
+
+    /// <summary>Opens Time Machine settings. Throws IOException if they could not be opened.</summary>
+    public static void OpenTimeMachineSettings() =>
+        FileActions.RunLauncher("/usr/bin/open", FileActions.LauncherTimeout,
+            OperatingSystem.IsMacOSVersionAtLeast(13) ? TimeMachineSettingsUrl : LegacyTimeMachineSettingsUrl);
+
+    /// <summary>Opens Disk Utility, where a locked drive can be unlocked (Mount asks for its password).</summary>
+    public static void OpenDiskUtility() =>
+        FileActions.RunLauncher("/usr/bin/open", FileActions.LauncherTimeout, "-b", "com.apple.DiskUtility");
+
     /// <summary>Opens Storage settings. Throws IOException if they could not be opened.</summary>
     public static void OpenStorageSettings() =>
         FileActions.RunLauncher("/usr/bin/open", FileActions.LauncherTimeout,
