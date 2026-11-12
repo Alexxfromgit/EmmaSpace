@@ -58,8 +58,11 @@ public readonly record struct VolumeSpace(ulong Total, ulong Free, ulong Availab
         : countsPurgeable ? $"{format(Available)} available of {format(Total)}"
         : $"{format(Free)} free of {format(Total)}";
 
-    /// <summary>"incl. 60.5 GB purgeable", or empty when there is too little to mention.</summary>
-    public string DescribePurgeable(Func<ulong, string> format) => HasPurgeable ? $"incl. {format(Purgeable)} purgeable" : "";
+    /// <summary>"incl. 60.5 GB purgeable", "less than 100.0 MB purgeable" or "no purgeable data".</summary>
+    public string DescribePurgeable(Func<ulong, string> format) =>
+        HasPurgeable ? $"incl. {format(Purgeable)} purgeable"
+        : Purgeable > 0 ? $"less than {format(PurgeableWorthMentioning)} purgeable"
+        : "no purgeable data";
 }
 
 public static class StorageInfo

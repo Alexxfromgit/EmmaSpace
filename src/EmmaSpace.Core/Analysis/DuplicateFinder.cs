@@ -10,7 +10,7 @@ namespace EmmaSpace.Core.Analysis;
 
 public sealed record DuplicateOptions
 {
-    public ulong MinSize { get; init; } = 1024 * 1024;
+    public ulong MinSize { get; init; } = 1_000_000; // "1 MB" in either unit system, like FileHashCache.MinCachedSize
 
     /// <summary>The storage the files are on; null asks the system, per file system the tree spans.</summary>
     public StorageKind? Storage { get; init; }

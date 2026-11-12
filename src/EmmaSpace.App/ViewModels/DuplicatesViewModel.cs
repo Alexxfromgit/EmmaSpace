@@ -71,7 +71,7 @@ public sealed partial class DuplicatesViewModel(INodeActions actions, SettingsSe
     : AnalysisViewModelBase(actions)
 {
     public static IReadOnlyList<string> MinSizeOptions { get; } = ["Any size", "1 MB", "10 MB", "100 MB"];
-    // In the units sizes are shown in, so "1 MB" in the list reads "1 MB" in the results line too.
+    // In the units sizes are shown in: on macOS "1 MB" is 1,000,000 bytes, as Finder counts.
     private static readonly ulong[] s_minSizes = ByteSize.UsesDecimalUnits
         ? [1, 1_000_000, 10_000_000, 100_000_000]
         : [1, 1UL << 20, 10UL << 20, 100UL << 20];
@@ -259,7 +259,12 @@ public sealed partial class DuplicatesViewModel(INodeActions actions, SettingsSe
             Status = Groups.Count == 0 ? found + "." : found;
             return;
         }
-        var sizes = _resultMinSize > 1 ? $", files of {ByteSize.Format(_resultMinSize)} and up" : "";
+        var sizes = _resultMinSize > 1 ? $", files of {SizeLabel(_resultMinSize)} and up" : "";
         Status = $"Saved with this snapshot{sizes}: {found}. Search again to check the files as they are now.";
     }
+
+    // "1 MB" as the size list says it, when the results were made with one of its sizes; else the size itself
+    // (results saved by a version that counted in 1024s read "1.05 MB").
+    private static string SizeLabel(ulong size) =>
+        Array.IndexOf(s_minSizes, size) is var i and > 0 ? MinSizeOptions[i] : ByteSize.Format(size);
 }

@@ -10,8 +10,8 @@
        right edge, so only the last few percent fade into the window's background. The art is 340 x 380 at this
        width, so the settings sit side by side in two columns to keep the window about that tall: stacked, they
        made it taller and the art was enlarged until most of Emma was cut off. On a screen narrower than 1000 px
-       (e.g. 1920 px at 200 %) FitToScreenOf narrows it to fit; the columns get narrower, their text wraps onto more lines, and the art is
-       cropped a little. -->
+       (e.g. 1920 px at 200 %) FitToScreenOf narrows it to fit; below 900 px the second column moves under the first, and the art is
+       cropped to the taller window. -->
   <Grid ColumnDefinitions="Auto,*">
     <Panel Width="340" MinHeight="380" ClipToBounds="True">
       <Panel.Background>
@@ -34,15 +34,16 @@
 
       <TextBlock DockPanel.Dock="Top" Text="Settings" Classes="h1" Margin="0,0,0,22" />
 
-      <Grid ColumnDefinitions="*,32,*">
+      <Grid x:Name="Columns" ColumnDefinitions="*,32,*" RowDefinitions="Auto,Auto">
         <StackPanel Spacing="22">
           <StackPanel Spacing="8">
             <TextBlock Text="Theme" Classes="h2" />
-            <StackPanel Orientation="Horizontal" Spacing="20">
+            <!-- Wraps when the column is narrow (Settings narrowed to a small screen). -->
+            <WrapPanel ItemSpacing="20">
               <RadioButton GroupName="Theme" Content="System" IsChecked="{Binding IsSystemTheme}" />
               <RadioButton GroupName="Theme" Content="Light" IsChecked="{Binding IsLightTheme}" />
               <RadioButton GroupName="Theme" Content="Dark" IsChecked="{Binding IsDarkTheme}" />
-            </StackPanel>
+            </WrapPanel>
             <TextBlock Text="{x:Static vm:SettingsViewModel.SystemThemeHint}" Classes="caption" TextWrapping="Wrap" />
           </StackPanel>
 
@@ -68,7 +69,7 @@
           </StackPanel>
         </StackPanel>
 
-        <StackPanel Grid.Column="2" Spacing="8">
+        <StackPanel x:Name="SecondColumn" Grid.Column="2" Spacing="8">
           <TextBlock Text="Duplicates" Classes="h2" />
           <CheckBox Content="Remember file fingerprints to speed up repeated searches" IsChecked="{Binding RememberFileHashes}" />
           <TextBlock Text="{x:Static vm:SettingsViewModel.RememberHashesHint}" Classes="caption" TextWrapping="Wrap" />

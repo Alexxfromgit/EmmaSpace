@@ -172,22 +172,25 @@
             <ItemsControl.ItemTemplate>
               <DataTemplate x:DataType="vm:DriveViewModel">
                 <Button Classes="card" Width="300" Margin="0,0,14,14" AutomationProperties.Name="{Binding Title}"
+                        AutomationProperties.HelpText="{Binding AccessibleSummary}"
                         Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).ScanDriveCommand}"
                         CommandParameter="{Binding}">
                   <Border Classes="card" Padding="18,16">
                     <StackPanel Spacing="6">
                       <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="14.5" TextTrimming="CharacterEllipsis" />
                       <TextBlock Text="{Binding Subtitle}" Classes="caption" TextTrimming="PathSegmentEllipsis" />
-                      <!-- Used as Finder counts it, with purgeable data (which macOS clears by itself) drawn
-                           lighter after it: the lower bar shows used plus purgeable, the upper one used alone. -->
-                      <Panel Margin="0,8,0,0" IsVisible="{Binding HasUsage}">
-                        <!-- Hidden from screen readers: the text below says it all, and two bars would be announced. -->
+                      <!-- Used as Finder counts it, with purgeable data (which macOS clears by itself) striped after it:
+                           the lower bar shows used plus purgeable, the upper one used alone. -->
+                      <Panel Margin="0,8,0,0" IsVisible="{Binding HasUsage}" Opacity="{Binding BarOpacity}">
+                        <!-- Hidden from screen readers: the card's help text reads the figures, and two bars would be
+                             announced. -->
                         <ProgressBar Classes="usage purgeable" Value="{Binding UsedWithPurgeablePercent}" Maximum="100"
                                      AutomationProperties.AccessibilityView="Raw" />
-                        <ProgressBar Classes="usage" Value="{Binding UsedPercent}" Maximum="100" Background="Transparent" />
+                        <ProgressBar Classes="usage" Value="{Binding UsedPercent}" Maximum="100" Background="Transparent"
+                                     AutomationProperties.Name="Used space" />
                       </Panel>
                       <TextBlock Text="{Binding UsageText}" Classes="caption" />
-                      <TextBlock Text="{Binding PurgeableText}" Classes="caption" IsVisible="{Binding HasPurgeable}" Margin="0,-4,0,0" />
+                      <TextBlock Text="{Binding PurgeableText}" Classes="caption" IsVisible="{Binding ShowsPurgeableLine}" Margin="0,-4,0,0" />
                     </StackPanel>
                   </Border>
                 </Button>

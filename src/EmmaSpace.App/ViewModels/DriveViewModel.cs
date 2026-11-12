@@ -8,6 +8,7 @@ namespace EmmaSpace.App.ViewModels;
 public sealed class DriveViewModel : ObservableObject
 {
     private bool _countsPurgeable; // the space is the system's own figure, purgeable data included (macOS)
+    private readonly bool _measured; // macOS startup disk: Finder's figure is asked for, and the card has a purgeable line
 
     private DriveViewModel(string path, string title, string subtitle, VolumeSpace space, bool isMeasuring)
     {
@@ -15,7 +16,7 @@ public sealed class DriveViewModel : ObservableObject
         Title = title;
         Subtitle = subtitle;
         Space = space;
-        IsMeasuring = isMeasuring;
+        IsMeasuring = _measured = isMeasuring;
     }
 
     public string Path { get; }
@@ -35,7 +36,13 @@ public sealed class DriveViewModel : ObservableObject
     public string Name => Path == "/" ? "the startup disk" : Title;
 
     public bool HasPurgeable => !IsMeasuring && Space.HasPurgeable;
-    public bool HasUsage => !IsMeasuring && Space.Total > 0;
+    public bool HasUsage => Space.Total > 0;
+
+    /// <summary>The bar keeps its place while measuring, unseen, so the card doesn't grow when the figures arrive.</summary>
+    public double BarOpacity => IsMeasuring ? 0 : 1;
+
+    /// <summary>The startup disk's second line: how much is purgeable. Shown, even while measuring, so its height is fixed.</summary>
+    public bool ShowsPurgeableLine => _measured;
 
     /// <summary>Used as Finder and System Settings count it: purgeable data counts as available.</summary>
     public double UsedPercent => Space.Total == 0 ? 0 : Space.Used * 100.0 / Space.Total;
@@ -43,8 +50,17 @@ public sealed class DriveViewModel : ObservableObject
     /// <summary>Used including purgeable data, drawn lighter behind <see cref="UsedPercent"/>.</summary>
     public double UsedWithPurgeablePercent => Space.Total == 0 ? 0 : Space.UsedWithPurgeable * 100.0 / Space.Total;
 
-    public string UsageText => IsMeasuring ? "" : Space.Describe(_countsPurgeable, ByteSize.Format);
-    public string PurgeableText => IsMeasuring ? "" : Space.DescribePurgeable(ByteSize.Format);
+    // macOS words it as Finder does, "available"; elsewhere free and available are the same figure, called free.
+    public string UsageText => IsMeasuring ? "Measuring available space…"
+        : Space.Describe(_countsPurgeable || OperatingSystem.IsMacOS(), ByteSize.Format);
+
+    public string PurgeableText => IsMeasuring ? "\u00A0" // keeps the line's height
+        : _countsPurgeable ? Space.DescribePurgeable(ByteSize.Format)
+        : "purgeable data unknown";
+
+    /// <summary>What a screen reader says after the card's title: the figures the card shows.</summary>
+    public string AccessibleSummary =>
+        string.Join(", ", new[] { Subtitle, UsageText, ShowsPurgeableLine && !IsMeasuring ? PurgeableText : "" }.Where(t => t.Length > 0));
 
     /// <summary>
     /// Fills in the system's own figures (null: none to be had, keep DriveInfo's). Slow on some volumes, so
@@ -57,8 +73,9 @@ public sealed class DriveViewModel : ObservableObject
         if (space is { } s) Space = s;
         _countsPurgeable = space is not null;
         IsMeasuring = false;
-        foreach (var name in (string[])[nameof(Space), nameof(IsMeasuring), nameof(HasPurgeable), nameof(HasUsage),
-                     nameof(UsedPercent), nameof(UsedWithPurgeablePercent), nameof(UsageText), nameof(PurgeableText)])
+        foreach (var name in (string[])[nameof(Space), nameof(IsMeasuring), nameof(HasPurgeable), nameof(HasUsage), nameof(BarOpacity),
+                     nameof(UsedPercent), nameof(UsedWithPurgeablePercent), nameof(UsageText), nameof(PurgeableText),
+                     nameof(AccessibleSummary)])
             OnPropertyChanged(name);
     }
 
@@ -75,8 +92,10 @@ public sealed class DriveViewModel : ObservableObject
                 var label = string.IsNullOrWhiteSpace(d.VolumeLabel) ? Kind(d.DriveType) : d.VolumeLabel;
                 var title = OperatingSystem.IsWindows() ? $"{label} ({d.Name.TrimEnd('\\')})" : label;
                 var free = (ulong)d.AvailableFreeSpace;
-                // Only macOS counts purgeable data, and not on network shares, which would only make the wait longer.
-                var measure = OperatingSystem.IsMacOS() && d.DriveType != DriveType.Network && NativeEngine.IsAvailable;
+                // macOS keeps purgeable data on the startup disk (Time Machine's local snapshots, iCloud copies, caches), so
+                // only it is measured. Other drives keep DriveInfo's figure: asking about them could make macOS ask the
+                // user to let Emma Space access a removable volume, and a stalled one would hold a thread.
+                var measure = OperatingSystem.IsMacOS() && d.RootDirectory.FullName == "/" && NativeEngine.IsAvailable;
                 result.Add(new DriveViewModel(d.RootDirectory.FullName, title, $"{d.DriveFormat} · {Kind(d.DriveType)}",
                     new VolumeSpace((ulong)d.TotalSize, free, free), isMeasuring: measure));
             }

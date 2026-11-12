@@ -76,11 +76,12 @@ public sealed class VolumeSpaceTests
         // Little purgeable data: still "available" (the figure Finder shows), just without the extra line.
         var little = new VolumeSpace(1_000_000_000_000, 50_000_000_000, 50_050_000_000);
         Assert.StartsWith(Decimal(50_050_000_000) + " available of", little.Describe(true, Decimal));
-        Assert.Equal("", little.DescribePurgeable(Decimal));
+        Assert.Equal($"less than {Decimal(100_000_000)} purgeable", little.DescribePurgeable(Decimal));
 
         // DriveInfo's figure (Windows, Linux, or macOS when the system's can't be had) is plain free space.
         var plain = new VolumeSpace(1_000_000_000_000, 50_000_000_000, 50_000_000_000);
         Assert.StartsWith(Decimal(50_000_000_000) + " free of", plain.Describe(false, Decimal));
+        Assert.Equal("no purgeable data", plain.DescribePurgeable(Decimal));
         Assert.Equal("", default(VolumeSpace).Describe(true, Decimal));
     }
 
