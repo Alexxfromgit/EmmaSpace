@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.0](https://github.com/Alexxfromgit/EmmaSpace/compare/v0.3.0...v0.4.0) (2026-11-12)
+
+
+### Features
+
+* explain locked, unmounted and backup drives on macOS ([#26](https://github.com/Alexxfromgit/EmmaSpace/issues/26)) ([877b4a6](https://github.com/Alexxfromgit/EmmaSpace/commit/877b4a660aae90d77b7b2481332145b2efee0b05))
+* explain purgeable space on macOS, with a link to Storage settings ([32d4648](https://github.com/Alexxfromgit/EmmaSpace/commit/32d4648d1e14f8bf231d5e7bec8eec3cc01a1fef))
+
+
+### Bug Fixes
+
+* keep Emma's picture whole in Settings by laying settings out side by side ([32d4648](https://github.com/Alexxfromgit/EmmaSpace/commit/32d4648d1e14f8bf231d5e7bec8eec3cc01a1fef))
+* match Finder's free space and size units on macOS ([32d4648](https://github.com/Alexxfromgit/EmmaSpace/commit/32d4648d1e14f8bf231d5e7bec8eec3cc01a1fef))
+
 ## [0.3.0](https://github.com/Alexxfromgit/EmmaSpace/compare/v0.2.0...v0.3.0) (2026-11-11)
 
 
