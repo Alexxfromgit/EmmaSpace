@@ -15,7 +15,7 @@ public interface IDialogService
 
     Task<string?> SaveFileAsync(string title, string suggestedName, string filterName, string extension);
 
-    Task<bool> ConfirmAsync(string title, string message, string confirmText, bool destructive = false);
+    Task<bool> ConfirmAsync(string title, string message, string confirmText, bool destructive = false, string cancelText = "Cancel");
 
     Task ShowErrorAsync(string title, string message);
 
@@ -69,8 +69,9 @@ public sealed class DialogService(Window owner, Func<SettingsViewModel> settings
         return path;
     }
 
-    public Task<bool> ConfirmAsync(string title, string message, string confirmText, bool destructive = false) =>
-        new MessageDialog(title, message, confirmText, "Cancel", destructive, DialogArt.Question).ShowDialog<bool>(owner);
+    public Task<bool> ConfirmAsync(string title, string message, string confirmText, bool destructive = false,
+        string cancelText = "Cancel") =>
+        new MessageDialog(title, message, confirmText, cancelText, destructive, DialogArt.Question).ShowDialog<bool>(owner);
 
     public Task ShowErrorAsync(string title, string message) =>
         new MessageDialog(title, message, "OK", null, false, DialogArt.Error).ShowDialog<bool>(owner);
@@ -78,7 +79,7 @@ public sealed class DialogService(Window owner, Func<SettingsViewModel> settings
     public Task ShowSettingsAsync() =>
         // Ctrl+, and the macOS menu item still work while a dialog is open; don't stack Settings on top of it.
         owner.OwnedWindows.Count > 0 ? Task.CompletedTask
-            : new SettingsWindow { DataContext = settings() }.ShowDialog(owner);
+            : new SettingsWindow { DataContext = settings() }.FitToScreenOf(owner).ShowDialog(owner);
 
     public async Task SetClipboardTextAsync(string text)
     {

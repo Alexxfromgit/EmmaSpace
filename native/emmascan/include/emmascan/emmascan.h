@@ -30,7 +30,7 @@
 extern "C" {
 #endif
 
-#define ES_ABI_VERSION 2u
+#define ES_ABI_VERSION 3u
 #define ES_NONE 0xFFFFFFFFu
 
 typedef uint16_t es_char; /* UTF-16 code unit */
@@ -172,6 +172,20 @@ ES_API es_status ES_CALL es_move_to_trash(const es_char* path);
    *out_device (optional) identifies the file system: paths with equal values are on the same one
    (0 when unknown). Only the arguments can make it fail. Opens nothing for reading or writing. */
 ES_API es_status ES_CALL es_get_storage_kind(const es_char* path, uint32_t* out_kind, uint64_t* out_device);
+
+/* Space on the volume holding a path, in bytes. */
+typedef struct es_volume_space {
+    uint64_t total;     /* capacity (for an APFS volume, that of its container, which its volumes share) */
+    uint64_t free;      /* unused: what new files can take without anything being removed first */
+    uint64_t available; /* free, plus what the system removes by itself when an app needs the room, as the file
+                           manager reports it. macOS: purgeable data such as Time Machine snapshots kept on the
+                           Mac, iCloud copies and caches. Never less than free */
+} es_volume_space;
+
+/* Reports the space on the volume holding path (an existing file or folder). ES_ERR_NOT_SUPPORTED where the
+   system has no notion of purgeable space (Windows, Linux): there the caller's own free-space figure is the
+   same. Opens nothing for reading or writing. */
+ES_API es_status ES_CALL es_get_volume_space(const es_char* path, es_volume_space* out_space);
 
 /* es_file_stamp.flags */
 #define ES_STAMP_TRUSTED 0x1u /* every change of the content moves the stamp on and no program can move it back:

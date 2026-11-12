@@ -24,7 +24,8 @@ else()
     list(APPEND EMMASCAN_SOURCES src/posix/posix_platform.cpp)
     if(APPLE)
         enable_language(OBJCXX)
-        list(APPEND EMMASCAN_SOURCES src/posix/attr_bulk.h src/posix/storage_mac.cpp src/posix/trash_mac.mm)
+        list(APPEND EMMASCAN_SOURCES src/posix/attr_bulk.h src/posix/storage_mac.cpp src/posix/trash_mac.mm
+                                     src/posix/volume_mac.mm)
     else()
         list(APPEND EMMASCAN_SOURCES src/posix/ext4_reader.h src/posix/ext4_reader_linux.cpp)
     endif()
@@ -43,7 +44,7 @@ set_target_properties(emmascan_objects PROPERTIES
 if(WIN32)
     target_compile_definitions(emmascan_objects PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
 elseif(APPLE)
-    set_source_files_properties(src/posix/trash_mac.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    set_source_files_properties(src/posix/trash_mac.mm src/posix/volume_mac.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
 endif()
 
 function(emmascan_link target)

@@ -71,7 +71,10 @@ public sealed partial class DuplicatesViewModel(INodeActions actions, SettingsSe
     : AnalysisViewModelBase(actions)
 {
     public static IReadOnlyList<string> MinSizeOptions { get; } = ["Any size", "1 MB", "10 MB", "100 MB"];
-    private static readonly ulong[] s_minSizes = [1, 1UL << 20, 10UL << 20, 100UL << 20];
+    // In the units sizes are shown in, so "1 MB" in the list reads "1 MB" in the results line too.
+    private static readonly ulong[] s_minSizes = ByteSize.UsesDecimalUnits
+        ? [1, 1_000_000, 10_000_000, 100_000_000]
+        : [1, 1UL << 20, 10UL << 20, 100UL << 20];
 
     private ulong _resultMinSize; // the smallest file size the shown results looked at
     private bool _resultFromSnapshot; // the shown results were saved with the snapshot on screen

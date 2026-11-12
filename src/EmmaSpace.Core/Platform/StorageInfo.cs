@@ -29,6 +29,39 @@ public readonly record struct StorageLocation(StorageKind Kind, ulong Device);
 public readonly record struct FileStamp(ulong Volume, UInt128 FileId, ulong Size, long WriteTimeNs, long ChangeTimeNs,
     ulong Usn, bool Trusted);
 
+/// <summary>
+/// Space on a volume, in bytes. <see cref="Free"/> is unused space; <see cref="Available"/> adds what the system
+/// removes by itself when an app needs the room (macOS: purgeable data), which is what Finder calls "available".
+/// </summary>
+public readonly record struct VolumeSpace(ulong Total, ulong Free, ulong Available)
+{
+    /// <summary>Purgeable space below this is not worth a mention.</summary>
+    public const ulong PurgeableWorthMentioning = 100_000_000;
+
+    /// <summary>Purgeable data: space macOS frees on its own when it is needed, without the user doing anything.</summary>
+    public ulong Purgeable => Available > Free ? Available - Free : 0;
+
+    public bool HasPurgeable => Purgeable >= PurgeableWorthMentioning;
+
+    /// <summary>What Finder and System Settings call used: the capacity less what is available.</summary>
+    public ulong Used => Total > Available ? Total - Available : 0;
+
+    /// <summary>Used including purgeable data, which macOS hasn't cleared yet.</summary>
+    public ulong UsedWithPurgeable => Total > Free ? Total - Free : 0;
+
+    /// <summary>
+    /// "121.8 GB available of 994.7 GB" when <paramref name="countsPurgeable"/> (the system's own figure, purgeable data
+    /// included, as Finder words it), else "57.1 GB free of 994.7 GB"; empty when the capacity is unknown.
+    /// </summary>
+    public string Describe(bool countsPurgeable, Func<ulong, string> format) =>
+        Total == 0 ? ""
+        : countsPurgeable ? $"{format(Available)} available of {format(Total)}"
+        : $"{format(Free)} free of {format(Total)}";
+
+    /// <summary>"incl. 60.5 GB purgeable", or empty when there is too little to mention.</summary>
+    public string DescribePurgeable(Func<ulong, string> format) => HasPurgeable ? $"incl. {format(Purgeable)} purgeable" : "";
+}
+
 public static class StorageInfo
 {
     /// <summary>
@@ -45,6 +78,19 @@ public static class StorageInfo
         return NativeMethods.GetStorageKind(path, out var kind, out var device) == EsStatus.Ok && kind <= (uint)StorageKind.Network
             ? new StorageLocation((StorageKind)kind, device)
             : default;
+    }
+
+    /// <summary>
+    /// The space on the volume holding <paramref name="path"/> as the system's file manager reports it, purgeable
+    /// data included; null where the system has no such notion (Windows, Linux: there <see cref="DriveInfo"/>'s free
+    /// space is the same figure), or the engine isn't loaded. May take a moment, so call it off the UI thread.
+    /// </summary>
+    public static VolumeSpace? GetSpace(string path)
+    {
+        if (string.IsNullOrEmpty(path) || !NativeEngine.IsAvailable) return null;
+        return NativeMethods.GetVolumeSpace(path, out var s) == EsStatus.Ok && s.Total > 0
+            ? new VolumeSpace(s.Total, s.Free, Math.Max(s.Available, s.Free))
+            : null;
     }
 
     /// <summary>The stamp of an open file; null without the native engine or if the system can't tell.</summary>

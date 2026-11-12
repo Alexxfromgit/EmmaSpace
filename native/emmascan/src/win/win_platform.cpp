@@ -99,6 +99,9 @@ int64_t filetime_to_unix_ns(int64_t filetime) { return filetime == 0 ? 0 : (file
 
 } // namespace
 
+// Windows frees nothing by itself when space runs low, so DriveInfo's free space is already the whole answer.
+es_status volume_space(std::u16string_view, es_volume_space&) { return ES_ERR_NOT_SUPPORTED; }
+
 uint32_t storage_kind(std::u16string_view path, uint64_t& device) {
     device = 0;
     std::wstring input(reinterpret_cast<const wchar_t*>(path.data()), path.size());

@@ -251,6 +251,59 @@ public sealed partial class MainWindowViewModel : ObservableObject, INodeActions
     {
         Drives.Clear();
         foreach (var d in DriveViewModel.Discover()) Drives.Add(d);
+        OnPropertyChanged(nameof(PurgeableNote));
+        // macOS: Finder's available space comes from a system service that can be slow, as can a sleeping disk, so each
+        // drive is asked off the UI thread on its own and its card filled in when its answer is in.
+        foreach (var d in Drives.Where(d => d.IsMeasuring)) _ = MeasureDriveAsync(d);
+    }
+
+    /// <summary>A drive that hasn't answered by then shows DriveInfo's figures rather than none.</summary>
+    private static readonly TimeSpan DriveMeasureTimeout = TimeSpan.FromSeconds(5);
+
+    // Runs on the UI thread (RefreshDrives does), so the await resumes there. A drive a newer refresh replaced is no longer
+    // shown, so filling it in does no harm.
+    private async Task MeasureDriveAsync(DriveViewModel drive)
+    {
+        VolumeSpace? space = null;
+        try
+        {
+            space = await Task.Run(() => StorageInfo.GetSpace(drive.Path)).WaitAsync(DriveMeasureTimeout);
+        }
+        catch (Exception)
+        {
+            // Timed out or failed: keep DriveInfo's figures. A late answer is ignored.
+        }
+        drive.SetMeasured(space);
+        OnPropertyChanged(nameof(PurgeableNote));
+    }
+
+    // macOS: the first drive (the startup disk comes first) whose available space includes purgeable data.
+    private DriveViewModel? PurgeableDrive => Drives.FirstOrDefault(d => d.HasPurgeable);
+
+    /// <summary>Start page note on why "available" is more than the empty space; null when there's nothing to explain.</summary>
+    public string? PurgeableNote => PurgeableDrive is { } d ? MacStorage.Note(d.Name, d.Space.Purgeable, ByteSize.Format) : null;
+
+    [RelayCommand]
+    private async Task ExplainPurgeableAsync()
+    {
+        if (PurgeableDrive is not { } d) return;
+        if (await _dialogs.ConfirmAsync("What is purgeable space?",
+                MacStorage.Explanation(d.Name, d.Space.Free, d.Space.Purgeable, ByteSize.Format), "Open Storage Settings",
+                cancelText: "Close"))
+            await OpenStorageSettingsAsync();
+    }
+
+    [RelayCommand]
+    private async Task OpenStorageSettingsAsync()
+    {
+        try
+        {
+            await Task.Run(MacStorage.OpenStorageSettings);
+        }
+        catch (IOException ex)
+        {
+            await _dialogs.ShowErrorAsync("Storage Settings", ex.Message);
+        }
     }
 
     [RelayCommand]

@@ -39,6 +39,7 @@
           <SolidColorBrush x:Key="EmmaAccentBrush" Color="#6E4CF5" />
           <SolidColorBrush x:Key="EmmaAccentSoftBrush" Color="#EAE4FF" />
           <SolidColorBrush x:Key="EmmaTrackBrush" Color="#ECEAF3" />
+          <SolidColorBrush x:Key="EmmaPurgeableBrush" Color="#C9BCFF" />
           <SolidColorBrush x:Key="EmmaDangerBrush" Color="#D33A4A" />
           <SolidColorBrush x:Key="EmmaGoodBrush" Color="#1E9E6A" />
           <SolidColorBrush x:Key="EmmaSelectionBrush" Color="#E4DDFF" />
@@ -57,6 +58,7 @@
           <SolidColorBrush x:Key="EmmaAccentBrush" Color="#9B82FF" />
           <SolidColorBrush x:Key="EmmaAccentSoftBrush" Color="#2C2647" />
           <SolidColorBrush x:Key="EmmaTrackBrush" Color="#2A2836" />
+          <SolidColorBrush x:Key="EmmaPurgeableBrush" Color="#4A3F80" />
           <SolidColorBrush x:Key="EmmaDangerBrush" Color="#FF6B78" />
           <SolidColorBrush x:Key="EmmaGoodBrush" Color="#4CD69B" />
           <SolidColorBrush x:Key="EmmaSelectionBrush" Color="#302858" />
@@ -201,6 +203,10 @@
       <Setter Property="CornerRadius" Value="3" />
       <Setter Property="Foreground" Value="{DynamicResource EmmaAccentBrush}" />
       <Setter Property="Background" Value="{DynamicResource EmmaTrackBrush}" />
+    </Style>
+    <!-- Purgeable data: the accent, faded, so it reads as "used for now" between used and free. -->
+    <Style Selector="ProgressBar.usage.purgeable">
+      <Setter Property="Foreground" Value="{DynamicResource EmmaPurgeableBrush}" />
     </Style>
   </Application.Styles>
 </Application>
