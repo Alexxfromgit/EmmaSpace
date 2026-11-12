@@ -74,6 +74,15 @@ internal unsafe struct EsResult
     public ulong ElapsedMs;
 }
 
+/// <summary>Mirror of <c>es_volume_space</c> in emmascan.h.</summary>
+[StructLayout(LayoutKind.Sequential)]
+public struct EsVolumeSpace
+{
+    public ulong Total;
+    public ulong Free;
+    public ulong Available;
+}
+
 /// <summary>Mirror of <c>es_file_stamp</c> in emmascan.h.</summary>
 [StructLayout(LayoutKind.Sequential)]
 public struct EsFileStamp

@@ -105,6 +105,50 @@ TEST_CASE("storage kind rejects missing arguments") {
     CHECK(es_get_storage_kind(reinterpret_cast<const es_char*>(path.c_str()), nullptr, nullptr) == ES_ERR_INVALID_ARG);
 }
 
+TEST_CASE("volume space is reported on macOS only") {
+    TempTree tree;
+    const auto w = tree.root.wstring();
+    const std::u16string path(w.begin(), w.end());
+    es_volume_space space{1, 2, 3};
+    const es_status status = es_get_volume_space(reinterpret_cast<const es_char*>(path.c_str()), &space);
+#if defined(__APPLE__)
+    REQUIRE(status == ES_OK);
+    CHECK(space.total > 0);
+    CHECK(space.free <= space.total);
+    CHECK(space.available >= space.free);
+    CHECK(space.available <= space.total);
+#else
+    CHECK(status == ES_ERR_NOT_SUPPORTED);
+    CHECK(space.total == 0); // nothing left over from before the call
+    CHECK(space.free == 0);
+    CHECK(space.available == 0);
+#endif
+}
+
+TEST_CASE("volume space of a missing path is not found") {
+    TempTree tree;
+    const auto w = (tree.root / "does-not-exist" / "x").wstring();
+    const std::u16string path(w.begin(), w.end());
+    es_volume_space space{1, 2, 3};
+    const es_status status = es_get_volume_space(reinterpret_cast<const es_char*>(path.c_str()), &space);
+#if defined(__APPLE__)
+    CHECK(status == ES_ERR_NOT_FOUND);
+#else
+    CHECK(status == ES_ERR_NOT_SUPPORTED);
+#endif
+    CHECK(space.total == 0);
+    CHECK(space.available == 0);
+}
+
+TEST_CASE("volume space rejects missing arguments") {
+    const std::u16string path = u"x";
+    es_volume_space space{1, 2, 3};
+    CHECK(es_get_volume_space(nullptr, &space) == ES_ERR_INVALID_ARG);
+    CHECK(space.total == 0);
+    CHECK(es_get_volume_space(reinterpret_cast<const es_char*>(u""), &space) == ES_ERR_INVALID_ARG);
+    CHECK(es_get_volume_space(reinterpret_cast<const es_char*>(path.c_str()), nullptr) == ES_ERR_INVALID_ARG);
+}
+
 namespace {
 
 // Opens a file read-only the way the app does and returns its handle as the API takes it.

@@ -570,6 +570,7 @@ bool is_elevated() { return geteuid() == 0; }
 
 #if !defined(__APPLE__)
 es_status move_to_trash(std::u16string_view) { return ES_ERR_NOT_SUPPORTED; } // .NET uses `gio trash` on Linux
+es_status volume_space(std::u16string_view, es_volume_space&) { return ES_ERR_NOT_SUPPORTED; } // no purgeable space
 #endif
 
 namespace {

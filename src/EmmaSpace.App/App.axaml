@@ -39,6 +39,14 @@
           <SolidColorBrush x:Key="EmmaAccentBrush" Color="#6E4CF5" />
           <SolidColorBrush x:Key="EmmaAccentSoftBrush" Color="#EAE4FF" />
           <SolidColorBrush x:Key="EmmaTrackBrush" Color="#ECEAF3" />
+          <!-- Purgeable data: diagonal stripes of the accent, so it stands out from both the used part and the empty track
+               (the stripes have the accent's contrast with the track), not just by a lighter shade. -->
+          <LinearGradientBrush x:Key="EmmaPurgeableBrush" StartPoint="0,0" EndPoint="5,5" SpreadMethod="Repeat">
+            <GradientStop Offset="0" Color="#6E4CF5" />
+            <GradientStop Offset="0.45" Color="#6E4CF5" />
+            <GradientStop Offset="0.45" Color="#D6CCFF" />
+            <GradientStop Offset="1" Color="#D6CCFF" />
+          </LinearGradientBrush>
           <SolidColorBrush x:Key="EmmaDangerBrush" Color="#D33A4A" />
           <SolidColorBrush x:Key="EmmaGoodBrush" Color="#1E9E6A" />
           <SolidColorBrush x:Key="EmmaSelectionBrush" Color="#E4DDFF" />
@@ -57,6 +65,12 @@
           <SolidColorBrush x:Key="EmmaAccentBrush" Color="#9B82FF" />
           <SolidColorBrush x:Key="EmmaAccentSoftBrush" Color="#2C2647" />
           <SolidColorBrush x:Key="EmmaTrackBrush" Color="#2A2836" />
+          <LinearGradientBrush x:Key="EmmaPurgeableBrush" StartPoint="0,0" EndPoint="5,5" SpreadMethod="Repeat">
+            <GradientStop Offset="0" Color="#9B82FF" />
+            <GradientStop Offset="0.45" Color="#9B82FF" />
+            <GradientStop Offset="0.45" Color="#3A3266" />
+            <GradientStop Offset="1" Color="#3A3266" />
+          </LinearGradientBrush>
           <SolidColorBrush x:Key="EmmaDangerBrush" Color="#FF6B78" />
           <SolidColorBrush x:Key="EmmaGoodBrush" Color="#4CD69B" />
           <SolidColorBrush x:Key="EmmaSelectionBrush" Color="#302858" />
@@ -201,6 +215,10 @@
       <Setter Property="CornerRadius" Value="3" />
       <Setter Property="Foreground" Value="{DynamicResource EmmaAccentBrush}" />
       <Setter Property="Background" Value="{DynamicResource EmmaTrackBrush}" />
+    </Style>
+    <!-- Purgeable data: striped (EmmaPurgeableBrush), so it reads as "used for now" between used and free. -->
+    <Style Selector="ProgressBar.usage.purgeable">
+      <Setter Property="Foreground" Value="{DynamicResource EmmaPurgeableBrush}" />
     </Style>
   </Application.Styles>
 </Application>

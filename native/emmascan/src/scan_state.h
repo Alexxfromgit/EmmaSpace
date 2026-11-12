@@ -61,6 +61,9 @@ es_status move_to_trash(std::u16string_view path);
 // to a value identifying that file system (0 when unknown).
 uint32_t storage_kind(std::u16string_view path, uint64_t& device);
 
+// Space on the volume holding path; ES_ERR_NOT_SUPPORTED where only the caller's free-space figure exists.
+es_status volume_space(std::u16string_view path, es_volume_space& space);
+
 // Fills stamp from an open file handle (HANDLE on Windows, file descriptor elsewhere).
 es_status file_stamp(intptr_t handle, es_file_stamp& stamp);
 

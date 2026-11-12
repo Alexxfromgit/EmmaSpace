@@ -172,21 +172,43 @@
             <ItemsControl.ItemTemplate>
               <DataTemplate x:DataType="vm:DriveViewModel">
                 <Button Classes="card" Width="300" Margin="0,0,14,14" AutomationProperties.Name="{Binding Title}"
+                        AutomationProperties.HelpText="{Binding AccessibleSummary}"
                         Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).ScanDriveCommand}"
                         CommandParameter="{Binding}">
                   <Border Classes="card" Padding="18,16">
                     <StackPanel Spacing="6">
                       <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="14.5" TextTrimming="CharacterEllipsis" />
                       <TextBlock Text="{Binding Subtitle}" Classes="caption" TextTrimming="PathSegmentEllipsis" />
-                      <ProgressBar Classes="usage" Value="{Binding UsedPercent}" Maximum="100" Margin="0,8,0,0"
-                                   IsVisible="{Binding HasUsage}" />
+                      <!-- Used as Finder counts it, with purgeable data (which macOS clears by itself) striped after it:
+                           the lower bar shows used plus purgeable, the upper one used alone. -->
+                      <Panel Margin="0,8,0,0" IsVisible="{Binding HasUsage}" Opacity="{Binding BarOpacity}">
+                        <!-- Hidden from screen readers: the card's help text reads the figures, and two bars would be
+                             announced. -->
+                        <ProgressBar Classes="usage purgeable" Value="{Binding UsedWithPurgeablePercent}" Maximum="100"
+                                     AutomationProperties.AccessibilityView="Raw" />
+                        <ProgressBar Classes="usage" Value="{Binding UsedPercent}" Maximum="100" Background="Transparent"
+                                     AutomationProperties.Name="Used space" />
+                      </Panel>
                       <TextBlock Text="{Binding UsageText}" Classes="caption" />
+                      <TextBlock Text="{Binding PurgeableText}" Classes="caption" IsVisible="{Binding ShowsPurgeableLine}" Margin="0,-4,0,0" />
                     </StackPanel>
                   </Border>
                 </Button>
               </DataTemplate>
             </ItemsControl.ItemTemplate>
           </ItemsControl>
+          <!-- macOS: Finder's "available" includes purgeable data; say what that is, so the figures don't look wrong. -->
+          <Border Classes="card" Background="{DynamicResource EmmaAccentSoftBrush}" Padding="14,8" Margin="0,0,14,14"
+                  HorizontalAlignment="Left" MaxWidth="928"
+                  IsVisible="{Binding PurgeableNote, Converter={x:Static ObjectConverters.IsNotNull}}">
+            <DockPanel>
+              <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="12,0,0,0">
+                <Button Content="Learn more" Command="{Binding ExplainPurgeableCommand}" />
+                <Button Classes="subtle" Content="Open Storage Settings" Command="{Binding OpenStorageSettingsCommand}" />
+              </StackPanel>
+              <TextBlock Text="{Binding PurgeableNote}" TextWrapping="Wrap" VerticalAlignment="Center" />
+            </DockPanel>
+          </Border>
           <Button Classes="link" Content="Choose another folder…" Command="{Binding BrowseCommand}" HorizontalAlignment="Left" />
         </StackPanel>
       </ScrollViewer>
@@ -245,7 +267,7 @@
                     </DataTemplate>
                   </TableViewColumn.CellTemplate>
                 </TableViewColumn>
-                <TableViewColumn Header="Size" Width="80" HorizontalContentAlignment="Right">
+                <TableViewColumn Header="Size" Width="88" HorizontalContentAlignment="Right">
                   <TableViewColumn.CellTemplate>
                     <DataTemplate x:DataType="vm:TreeRowViewModel">
                       <TextBlock Text="{Binding SizeText}" Classes="num" VerticalAlignment="Center" IsVisible="{Binding !IsMore}" />
@@ -262,7 +284,7 @@
                     </DataTemplate>
                   </TableViewColumn.CellTemplate>
                 </TableViewColumn>
-                <TableViewColumn Header="On disk" Width="80" HorizontalContentAlignment="Right">
+                <TableViewColumn Header="On disk" Width="88" HorizontalContentAlignment="Right">
                   <TableViewColumn.CellTemplate>
                     <DataTemplate x:DataType="vm:TreeRowViewModel">
                       <TextBlock Text="{Binding AllocatedText}" Classes="num muted" VerticalAlignment="Center" IsVisible="{Binding !IsMore}" />
@@ -371,7 +393,7 @@
                             </DataTemplate>
                           </TableViewColumn.CellTemplate>
                         </TableViewColumn>
-                        <TableViewColumn Header="Size" Width="80" HorizontalContentAlignment="Right">
+                        <TableViewColumn Header="Size" Width="88" HorizontalContentAlignment="Right">
                           <TableViewColumn.CellTemplate>
                             <DataTemplate x:DataType="vm:ExtensionRowViewModel">
                               <TextBlock Text="{Binding SizeText}" Classes="num" VerticalAlignment="Center" />

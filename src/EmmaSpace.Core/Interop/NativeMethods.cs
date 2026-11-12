@@ -6,7 +6,7 @@ namespace EmmaSpace.Core.Interop;
 internal static unsafe partial class NativeMethods
 {
     private const string Library = "emmascan";
-    public const uint AbiVersion = 2;
+    public const uint AbiVersion = 3;
     public const uint FollowReparse = 0x1;
 
     [LibraryImport(Library, EntryPoint = "es_get_version")]
@@ -48,6 +48,10 @@ internal static unsafe partial class NativeMethods
     [LibraryImport(Library, EntryPoint = "es_get_storage_kind", StringMarshalling = StringMarshalling.Utf16)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     public static partial EsStatus GetStorageKind(string path, out uint kind, out ulong device);
+
+    [LibraryImport(Library, EntryPoint = "es_get_volume_space", StringMarshalling = StringMarshalling.Utf16)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    public static partial EsStatus GetVolumeSpace(string path, out EsVolumeSpace space);
 
     [LibraryImport(Library, EntryPoint = "es_get_file_stamp")]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]

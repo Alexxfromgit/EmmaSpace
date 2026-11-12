@@ -58,8 +58,11 @@ public sealed class FileHashCache
     /// <summary>A cache kept in memory only, or saved to <paramref name="path"/> by <see cref="Save"/>.</summary>
     public FileHashCache(string? path = null) => _path = path;
 
-    /// <summary>Smaller files are not remembered: reading them costs about as much as checking them.</summary>
-    internal ulong MinCachedSize { get; init; } = 1024 * 1024;
+    /// <summary>
+    /// Smaller files are not remembered: reading them costs about as much as checking them. 1,000,000 bytes, so the
+    /// "1 MB and up" in Settings holds whether a megabyte is shown as 1000 or 1024 KB.
+    /// </summary>
+    internal ulong MinCachedSize { get; init; } = 1_000_000;
 
     /// <summary>How old a file's last change must be, when its stamp is taken, before its hash is remembered (tests set it to zero).</summary>
     internal TimeSpan SettleTime { get; init; } = TimeSpan.FromMinutes(1);

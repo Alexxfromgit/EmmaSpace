@@ -161,6 +161,19 @@ ES_API es_status ES_CALL es_get_storage_kind(const es_char* path, uint32_t* out_
     return ES_OK;
 }
 
+ES_API es_status ES_CALL es_get_volume_space(const es_char* path, es_volume_space* out_space) {
+    if (!out_space) return ES_ERR_INVALID_ARG;
+    *out_space = es_volume_space{};
+    auto view = to_view(path);
+    if (view.empty()) return ES_ERR_INVALID_ARG;
+    try {
+        return emmascan::platform::volume_space(view, *out_space);
+    } catch (...) {
+        *out_space = es_volume_space{};
+        return ES_ERR_INTERNAL;
+    }
+}
+
 ES_API es_status ES_CALL es_get_file_stamp(intptr_t handle, es_file_stamp* out_stamp) {
     if (!out_stamp) return ES_ERR_INVALID_ARG;
     *out_stamp = es_file_stamp{};
