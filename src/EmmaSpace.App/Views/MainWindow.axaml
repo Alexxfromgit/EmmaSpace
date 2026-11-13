@@ -212,7 +212,7 @@
                     <StackPanel Spacing="6">
                       <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="14.5" TextTrimming="CharacterEllipsis" />
                       <TextBlock Text="{Binding Subtitle}" Classes="caption" TextTrimming="PathSegmentEllipsis" />
-                      <!-- Used as Finder counts it, with purgeable data (which macOS clears by itself) striped after it:
+                      <!-- Used as Finder counts it, with purgeable data (which macOS clears by itself) dimmed after it:
                            the lower bar shows used plus purgeable, the upper one used alone. -->
                       <Panel Margin="0,8,0,0" IsVisible="{Binding HasUsage}" Opacity="{Binding BarOpacity}">
                         <!-- Hidden from screen readers: the card's help text reads the figures, and two bars would be
