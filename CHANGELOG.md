@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/Alexxfromgit/EmmaSpace/compare/v0.4.0...v0.4.1) (2026-11-13)
+
+
+### Bug Fixes
+
+* show purgeable space as a dimmed bar instead of stripes ([#28](https://github.com/Alexxfromgit/EmmaSpace/issues/28)) ([a4513d0](https://github.com/Alexxfromgit/EmmaSpace/commit/a4513d06e4bc6665649b9e531efb63542a930d66))
+
 ## [0.4.0](https://github.com/Alexxfromgit/EmmaSpace/compare/v0.3.0...v0.4.0) (2026-11-12)
 
 
